@@ -281,6 +281,20 @@ function locked_strategy_for_scope(scope, profile, proto)
   return locked_strategy_for_profile(profile, proto, scope)
 end
 
+-- Точный хост, затем родители по метке. 0 — лок, не промах.
+-- ponytail: IPv4 не обходить, иначе 1.2.3.4 дойдёт до профиля "3".
+function locked_strategy_for_host(host, proto, scope)
+  if not host or host == "" then return nil end
+  host = string.lower(tostring(host):gsub("%.+$", ""))
+  if host == "" or string.match(host, "^%d+%.%d+%.%d+%.%d+$") then return nil end
+  while host and host ~= "" do
+    local locked, conflict = locked_strategy_for_profile(host, proto, scope)
+    if locked ~= nil or conflict then return locked end
+    host = string.match(host, "^[^%.]+%.(.+)$")
+  end
+  return nil
+end
+
 function locked_conflict_count()
   load_locked_tables()
   return LOCKED_CONFLICTS_TOTAL
@@ -1203,19 +1217,22 @@ function circular_locked(ctx, desync)
   end
 
   local scope = desync_client_scope(desync)
-  local locked = locked_strategy_for_profile(profile, proto, scope)
+  local locked = nil
+  if host and host ~= "" then
+    locked = locked_strategy_for_host(host, proto, scope)
+  end
   -- Profile 2 uses circular_locked in the stable default config. Consume only
   -- verified Go/Lua auto-locks; transfer seeds remain proposals, and an
-  -- explicit per-host lock above keeps precedence.
-  if not locked and base_profile == "2" and host and type(slm_get_verified_auto_locked) == "function" then
+  -- explicit per-host lock above keeps precedence. nil, not `not locked`: 0 is a lock.
+  if locked == nil and base_profile == "2" and host and type(slm_get_verified_auto_locked) == "function" then
     locked = slm_get_verified_auto_locked(base_profile, host, scope)
     if locked then
       DLOG("circular_locked: verified Googlevideo hostkey lock "..tostring(locked))
     end
   end
-  if (not locked) and profile ~= base_profile then
+  if locked == nil then
     locked = locked_strategy_for_profile(base_profile, proto, scope)
-    if locked then
+    if locked and host and host ~= "" and profile ~= base_profile then
       DLOG("circular_locked: fallback lock profile="..base_profile.." for host profile="..profile)
     end
   end
