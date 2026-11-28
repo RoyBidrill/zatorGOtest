@@ -36,8 +36,13 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown, true))
 </script>
 
 <template>
-  <div v-if="confirmState" :class="['modal-overlay', { 'is-visible': visible }]" role="dialog" aria-modal="true"
-    @click.self="settleConfirm(false)">
+  <div
+    v-if="confirmState"
+    :class="['modal-overlay', { 'is-visible': visible }]"
+    role="dialog"
+    aria-modal="true"
+    @click.self="settleConfirm(false)"
+  >
     <div class="modal-card">
       <h3 class="modal-title">{{ confirmState.title }}</h3>
       <p v-for="(part, index) in messageParts" :key="index" class="modal-message">{{ part }}</p>
@@ -45,8 +50,12 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown, true))
         <button v-if="!confirmState.info" type="button" class="ghost modal-cancel" @click="settleConfirm(false)">
           {{ confirmState.cancelText || 'Отмена' }}
         </button>
-        <button ref="confirmButton" type="button" :class="confirmState.danger ? 'danger modal-confirm' : 'primary modal-confirm'"
-          @click="settleConfirm(true)">
+        <button
+          ref="confirmButton"
+          type="button"
+          :class="confirmState.danger ? 'danger modal-confirm' : 'primary modal-confirm'"
+          @click="settleConfirm(true)"
+        >
           {{ confirmState.confirmText || 'Подтвердить' }}
         </button>
       </div>

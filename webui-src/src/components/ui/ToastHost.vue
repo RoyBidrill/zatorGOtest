@@ -11,8 +11,9 @@ let removeTimer = 0
 function dismiss() {
   if (!current.value) return
   window.clearTimeout(hideTimer)
+  window.clearTimeout(removeTimer)
   visible.value = false
-  window.setTimeout(() => { current.value = null }, 300)
+  removeTimer = window.setTimeout(() => { current.value = null }, 260)
 }
 
 watch(toast, (value) => {
@@ -25,14 +26,19 @@ watch(toast, (value) => {
   hideTimer = window.setTimeout(dismiss, value.type === 'error' || value.type === 'warning' ? 8000 : 3500)
 })
 
-onBeforeUnmount(() => window.clearTimeout(hideTimer))
+onBeforeUnmount(() => {
+  window.clearTimeout(hideTimer)
+  window.clearTimeout(removeTimer)
+})
 </script>
 
 <template>
   <div v-if="current" class="toast-region" role="status" aria-live="polite" aria-atomic="true">
     <div :class="['toast', current.type, { 'is-visible': visible }]" :role="current.type === 'error' ? 'alert' : undefined">
       <div class="toast-message">{{ current.message }}</div>
-      <button type="button" class="toast-close" aria-label="Закрыть уведомление" @click="dismiss"><Icon name="cross" /></button>
+      <button type="button" class="toast-close" aria-label="Закрыть уведомление" title="Закрыть" @click="dismiss">
+        <Icon name="cross" class="icon-sm" />
+      </button>
     </div>
   </div>
 </template>

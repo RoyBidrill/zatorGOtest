@@ -6,6 +6,7 @@ import { busyActive, busyButton, withBusy } from '../../stores/busy'
 import { confirmDialog } from '../../stores/confirm'
 import { refreshAll } from '../../stores/status'
 import { showToast } from '../../stores/toast'
+import Icon from '../ui/Icon.vue'
 
 const props = withDefaults(defineProps<{
   scope?: string
@@ -17,6 +18,9 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{ started: []; cancelled: [] }>()
 
+type SweepMode = 'full' | 'quick'
+
+const sweepMode = ref<SweepMode>('full')
 const data = ref<SupersweepPayload | null>(null)
 const loading = ref(false)
 const error = ref('')
@@ -33,20 +37,35 @@ const quickAddressDefaults: Record<number, string> = {
   4: 'discord.com',
   5: '',
 }
-const showQuicOptions = computed(() => includeQuic.value || quickProfile.value === 5)
+const showQuicOptions = computed(() =>
+  (sweepMode.value === 'full' && includeQuic.value) || (sweepMode.value === 'quick' && quickProfile.value === 5))
 const quickAddress = ref(quickAddressDefaults[quickProfile.value])
 const states = {
   idle: 'Нет прогона', starting: 'Подготовка', running: 'Выполняется', applying: 'Применение результатов',
   done: 'Завершён', cancelled: 'Отменён', interrupted: 'Прерван',
 }
 const verdicts = { ok: 'Работает', warn: 'С предупреждением', fail: 'Не работает', unknown: 'Не проверено' }
-const stateLabel = computed(() => data.value ? states[data.value.state] : 'Загрузка…')
+const stateLabel = computed(() => data.value ? states[data.value.state] : 'Загрузка...')
 const active = computed(() => !!data.value?.active)
 const scopeOptions = computed(() => {
   const list = props.scopes?.length ? [...props.scopes] : ['default']
   if (!list.includes(runScope.value)) list.unshift(runScope.value)
   return list
 })
+
+const stateChipClass = computed(() => {
+  const st = data.value?.state
+  if (st === 'done') return 'on'
+  if (st === 'running' || st === 'starting' || st === 'applying') return 'is-info'
+  if (st === 'cancelled' || st === 'interrupted') return 'is-warn'
+  return ''
+})
+
+function progressPct(done: number, total: number): number {
+  if (!total || total <= 0) return 0
+  return Math.min(100, Math.max(0, Math.round((done / total) * 100)))
+}
+
 let mounted = false
 let timer: number | undefined
 let controller: AbortController | null = null
@@ -70,6 +89,7 @@ function valid(value: SupersweepPayload) {
     Object.prototype.hasOwnProperty.call(states, value.state) && ['none', 'live', 'saved'].includes(value.source) &&
     [value.started, value.updated, value.completed, value.total].every(count) &&
     text(value.scope) && text(value.phase) &&
+    (value.error === undefined || text(value.error)) &&
     Array.isArray(value.workers) && value.workers.every((worker) => worker &&
       [worker.name, worker.label, worker.current_target, worker.greens, worker.warns, worker.applied].every(text) &&
       [worker.profile, worker.completed, worker.total, worker.ok, worker.warn, worker.fail].every(count) &&
@@ -80,7 +100,7 @@ function valid(value: SupersweepPayload) {
       Object.prototype.hasOwnProperty.call(verdicts, row.verdict) && strategy(row.best_strategy) && strategy(row.applied))
 }
 function date(value: number) {
-  return value > 0 ? new Date(value * 1000).toLocaleString('ru-RU') : '—'
+  return value > 0 ? new Date(value * 1000).toLocaleString('ru-RU') : '-'
 }
 function stopTimer() {
   window.clearTimeout(timer)
@@ -98,6 +118,9 @@ async function refresh() {
     if (!valid(result)) throw new Error('Некорректный ответ сервера')
     if (mounted) {
       if (wasActive && !result.active) {
+        if (result.error) {
+          showToast(result.error, 'error')
+        }
         refreshAll().catch(() => undefined)
       }
       wasActive = result.active
@@ -123,7 +146,7 @@ async function startRun() {
   const ok = await confirmDialog({
     title: 'Запустить суперсвип?',
     message: includeQuic.value
-      ? 'Прогон подберёт стратегии для профилей 1–4, доменов РКН и в конце протестирует профиль 5 (QUIC) на живом nfqws2. Требуется h3-curl.'
+      ? 'Прогон подберёт стратегии для профилей 1-4, доменов РКН и в конце протестирует профиль 5 (QUIC) на живом nfqws2. Требуется h3-curl.'
       : 'Прогон подберёт стратегии для профилей и доменов РКН, затем применит победителей. Это может занять несколько минут.',
   })
   if (!ok) return
@@ -213,159 +236,411 @@ defineExpose({ refresh })
 </script>
 
 <template>
-  <section id="supersweep-panel" class="supersweep-panel" aria-labelledby="supersweep-title">
-    <div class="supersweep-header">
-      <h2 id="supersweep-title">Суперсвип</h2>
-      <div class="actions">
-        <button id="supersweep-refresh-btn" type="button" :disabled="loading || busyActive" :aria-busy="loading" @click="refresh">
-          {{ loading ? 'Обновляем…' : 'Обновить' }}
-        </button>
-        <button type="button" class="primary" :disabled="busyActive || active"
-          :class="{ 'is-busy': busyButton === 'ss-start' }" @click="startRun">
-          Запустить
-        </button>
-        <button type="button" :disabled="busyActive || active || (quickProfile !== 5 && !quickAddress.trim())"
-          :class="{ 'is-busy': busyButton === 'quick-start' }" @click="startQuickRun">
-          Быстрый подбор
-        </button>
-        <button type="button" class="ghost danger" :disabled="busyActive || !active"
-          :class="{ 'is-busy': busyButton === 'ss-cancel' }" @click="cancelRun">
-          Остановить
-        </button>
+  <div id="supersweep-panel" class="sweep-stack" aria-labelledby="supersweep-title">
+    <div v-if="active" class="notice-banner is-info" role="status">
+      <span>
+        Идёт подбор: <strong>{{ stateLabel }}</strong>
+        <template v-if="data?.phase"> · {{ data.phase }}</template>
+        <span class="mono"> ({{ data?.completed ?? 0 }} / {{ data?.total ?? 0 }})</span>
+      </span>
+      <button
+        type="button"
+        class="danger compact-btn"
+        :disabled="busyActive"
+        :class="{ 'is-busy': busyButton === 'ss-cancel' }"
+        @click="cancelRun"
+      >
+        <Icon name="stop" class="icon-sm" />
+        <span>Остановить</span>
+      </button>
+    </div>
+
+    <div v-if="error" class="notice-banner is-danger" role="alert">
+      <span>
+        Не удалось обновить суперсвип: {{ error }}
+        <template v-if="data"> Показаны последние полученные данные, они могут быть устаревшими.</template>
+      </span>
+    </div>
+
+    <div v-if="data?.error" class="notice-banner is-warn" role="alert">
+      <span><strong>Прогон остановлен:</strong> {{ data.error }}</span>
+    </div>
+
+    <section class="panel">
+      <div class="panel-h">
+        <div>
+          <h2 id="supersweep-title">Параметры запуска</h2>
+          <p class="panel-sub">Автоподбор для всех профилей и доменов РКН или точечный тест одного профиля.</p>
+        </div>
+        <div class="seg-group" role="tablist" aria-label="Режим подбора">
+          <button
+            type="button"
+            role="tab"
+            :aria-selected="sweepMode === 'full'"
+            :class="{ active: sweepMode === 'full' }"
+            @click="sweepMode = 'full'"
+          >
+            Полный прогон
+          </button>
+          <button
+            type="button"
+            role="tab"
+            :aria-selected="sweepMode === 'quick'"
+            :class="{ active: sweepMode === 'quick' }"
+            @click="sweepMode = 'quick'"
+          >
+            Быстрый подбор
+          </button>
+        </div>
       </div>
-    </div>
 
-    <p class="panel-d">Автоподбор стратегий для профилей и доменов РКН. Пустой список доменов — эталонный набор (xhamster.com, anidub.com, amnezia.org).</p>
+      <template v-if="sweepMode === 'full'">
+        <div class="grid-2 sweep-form">
+          <label class="field">
+            <span>Scope</span>
+            <select v-model="runScope" :disabled="busyActive || active">
+              <option v-for="s in scopeOptions" :key="s" :value="s">{{ s }}</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>TLS preference</span>
+            <select v-model="tlsPref" :disabled="busyActive || active">
+              <option value="any">any</option>
+              <option value="12">TLS 1.2</option>
+              <option value="13">TLS 1.3</option>
+              <option value="both">both</option>
+            </select>
+          </label>
+          <label class="field field-full">
+            <span>Домены РКН (по одному в строке, пусто - эталонный набор)</span>
+            <textarea
+              v-model="domainsText"
+              rows="3"
+              :disabled="busyActive || active"
+              placeholder="xhamster.com&#10;anidub.com&#10;amnezia.org"
+            />
+          </label>
+          <label class="toggle-row" :class="{ 'field-full': !showQuicOptions }">
+            <span>Включить QUIC (профиль 5, live-режим)</span>
+            <input v-model="includeQuic" type="checkbox" :disabled="busyActive || active">
+          </label>
+          <label v-if="showQuicOptions" class="field">
+            <span>Раунды QUIC (1-5)</span>
+            <select v-model.number="quicRounds" :disabled="busyActive || active">
+              <option v-for="n in [1, 2, 3, 4, 5]" :key="n" :value="n">{{ n }}</option>
+            </select>
+          </label>
+        </div>
 
-    <div class="grid-2 supersweep-controls">
-      <label class="field">
-        <span>Scope</span>
-        <select v-model="runScope" :disabled="busyActive || active">
-          <option v-for="s in scopeOptions" :key="s" :value="s">{{ s }}</option>
-        </select>
-      </label>
-      <label class="field">
-        <span>TLS preference</span>
-        <select v-model="tlsPref" :disabled="busyActive || active">
-          <option value="any">any</option>
-          <option value="12">TLS 1.2</option>
-          <option value="13">TLS 1.3</option>
-          <option value="both">both</option>
-        </select>
-      </label>
-      <label class="field" style="grid-column:1/-1">
-        <span>Домены РКН (по одному в строке, необязательно)</span>
-        <textarea v-model="domainsText" rows="3" :disabled="busyActive || active"
-          placeholder="xhamster.com&#10;anidub.com&#10;amnezia.org"></textarea>
-      </label>
-      <label class="field">
-        <span>Быстрый подбор: профиль</span>
-        <select v-model.number="quickProfile" :disabled="busyActive || active">
-          <option :value="1">YouTube (1)</option>
-          <option :value="2">Googlevideo media (2)</option>
-          <option :value="3">Домен РКН (3)</option>
-          <option :value="4">Discord (4)</option>
-          <option :value="5">YouTube QUIC / HTTP3 (5)</option>
-        </select>
-      </label>
-      <label class="field">
-        <span>Адрес проверки</span>
-        <input v-model="quickAddress" :disabled="busyActive || active"
-          :placeholder="quickProfile === 5 ? 'Необязательно (видеопоток YouTube QUIC)' : 'www.youtube.com'" />
-      </label>
-      <label class="toggle">
-        <input v-model="includeQuic" type="checkbox" :disabled="busyActive || active">
-        <span>Включить QUIC (профиль 5, live-режим)</span>
-      </label>
-      <label v-if="showQuicOptions" class="field">
-        <span>Раунды QUIC (1–5)</span>
-        <select v-model.number="quicRounds" :disabled="busyActive || active">
-          <option v-for="n in [1, 2, 3, 4, 5]" :key="n" :value="n">{{ n }}</option>
-        </select>
-      </label>
-    </div>
-    <p v-if="showQuicOptions" class="quic-live-warn" role="note">
-      QUIC-подбор (профиль 5) временно переключает реальный лок на живом nfqws2 и требует установленный <code>h3-curl</code> (см. карточку Профиля 5 во вкладке «Стратегии»).
-    </p>
+        <p v-if="showQuicOptions" class="notice-banner is-warn quic-live-warn" role="note">
+          <span>
+            QUIC-подбор (профиль 5) временно переключает реальный лок на живом nfqws2 и требует установленный <code>h3-curl</code> (см. карточку Профиля 5 во вкладке «Стратегии»).
+          </span>
+        </p>
 
-    <p v-if="error" class="supersweep-error" role="alert">Не удалось обновить суперсвип: {{ error }}
-      <span v-if="data"> Показаны последние полученные данные — они могут быть устаревшими.</span>
-    </p>
-    <p v-if="!data && !error" role="status">Загружаем данные суперсвипа…</p>
-    <template v-if="data">
-      <p role="status"><strong>{{ stateLabel }}</strong>
-        · {{ data.source === 'saved' ? 'Сохранённый отчёт' : data.source === 'live' ? 'Текущий отчёт' : 'Нет отчёта' }}
-        <span v-if="error"> · Устаревшие данные</span>
-      </p>
-      <p v-if="!data.available && !active">Прогонов пока нет. Заполните параметры выше и нажмите «Запустить».</p>
+        <div class="actions sweep-actions">
+          <button
+            type="button"
+            class="primary"
+            :disabled="busyActive || active"
+            :class="{ 'is-busy': busyButton === 'ss-start' }"
+            @click="startRun"
+          >
+            <Icon name="play" class="icon-sm" />
+            <span>Запустить полный прогон</span>
+          </button>
+        </div>
+      </template>
+
       <template v-else>
-        <p>Фаза: {{ data.phase || '—' }} · Выполнено: {{ data.completed }} / {{ data.total }}</p>
-        <progress v-if="data.total > 0" :value="data.completed" :max="data.total" aria-label="Общий прогресс суперсвипа" />
-        <p class="supersweep-meta">Scope прогона: {{ data.scope || '—' }} · Начало: {{ date(data.started) }} · Обновлено: {{ date(data.updated) }}</p>
-        <div class="supersweep-workers">
-          <article v-for="worker in data.workers" :key="worker.name" class="supersweep-worker">
-            <h3>{{ worker.label || worker.name }} · Профиль {{ worker.profile }}</h3>
-            <p>Выполнено: {{ worker.completed }} / {{ worker.total }}</p>
-            <progress v-if="worker.total > 0" :value="worker.completed" :max="worker.total" :aria-label="'Прогресс: ' + (worker.label || worker.name)" />
-            <p>Текущая стратегия: {{ worker.current_strategy ?? '—' }} · Цель: {{ worker.current_target || '—' }}</p>
-            <p><span class="supersweep-ok">Успех: {{ worker.ok }}</span> · <span class="supersweep-warn">Предупреждения: {{ worker.warn }}</span> · <span class="supersweep-error">Ошибки: {{ worker.fail }}</span></p>
-            <p>Зелёные стратегии: {{ worker.greens || '—' }}</p>
-            <p>Жёлтые стратегии: {{ worker.warns || '—' }}</p>
-            <p>Применено по отчёту: {{ worker.applied || '—' }}</p>
+        <div class="grid-2 sweep-form">
+          <label class="field">
+            <span>Scope</span>
+            <select v-model="runScope" :disabled="busyActive || active">
+              <option v-for="s in scopeOptions" :key="s" :value="s">{{ s }}</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Профиль</span>
+            <select v-model.number="quickProfile" :disabled="busyActive || active">
+              <option :value="1">YouTube (1)</option>
+              <option :value="2">Googlevideo media (2)</option>
+              <option :value="3">Домен РКН (3)</option>
+              <option :value="4">Discord (4)</option>
+              <option :value="5">YouTube QUIC / HTTP3 (5)</option>
+            </select>
+          </label>
+          <label v-if="quickProfile !== 5" class="field">
+            <span>TLS preference</span>
+            <select v-model="tlsPref" :disabled="busyActive || active">
+              <option value="any">any</option>
+              <option value="12">TLS 1.2</option>
+              <option value="13">TLS 1.3</option>
+              <option value="both">both</option>
+            </select>
+          </label>
+          <label v-else class="field">
+            <span>Раунды QUIC (1-5)</span>
+            <select v-model.number="quicRounds" :disabled="busyActive || active">
+              <option v-for="n in [1, 2, 3, 4, 5]" :key="n" :value="n">{{ n }}</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Адрес проверки</span>
+            <input
+              v-model="quickAddress"
+              :disabled="busyActive || active"
+              :placeholder="quickProfile === 5 ? 'Необязательно (видеопоток YouTube QUIC)' : 'www.youtube.com'"
+            >
+          </label>
+        </div>
+
+        <p v-if="showQuicOptions" class="notice-banner is-warn quic-live-warn" role="note">
+          <span>
+            QUIC-подбор (профиль 5) временно переключает реальный лок на живом nfqws2 и требует установленный <code>h3-curl</code> (см. карточку Профиля 5 во вкладке «Стратегии»).
+          </span>
+        </p>
+
+        <div class="actions sweep-actions">
+          <button
+            type="button"
+            class="primary"
+            :disabled="busyActive || active || (quickProfile !== 5 && !quickAddress.trim())"
+            :class="{ 'is-busy': busyButton === 'quick-start' }"
+            @click="startQuickRun"
+          >
+            <Icon name="play" class="icon-sm" />
+            <span>Запустить быстрый подбор</span>
+          </button>
+        </div>
+      </template>
+    </section>
+
+    <section class="panel" aria-label="Ход и результаты прогона">
+      <div class="panel-h">
+        <div>
+          <h2>Ход и результаты прогона</h2>
+          <p v-if="data" class="panel-sub mono">
+            Scope: {{ data.scope || '-' }} · Начало: {{ date(data.started) }} · Обновлено: {{ date(data.updated) }}
+          </p>
+        </div>
+        <div class="actions">
+          <span v-if="data" class="chip" :class="stateChipClass">{{ stateLabel }}</span>
+          <span v-if="data" class="chip">
+            {{ data.source === 'saved' ? 'Сохранённый отчёт' : data.source === 'live' ? 'Текущий отчёт' : 'Нет отчёта' }}
+          </span>
+          <button
+            id="supersweep-refresh-btn"
+            type="button"
+            class="ghost compact-btn"
+            :disabled="loading || busyActive"
+            :aria-busy="loading"
+            @click="refresh"
+          >
+            <Icon name="refresh" class="icon-sm" />
+            <span>{{ loading ? 'Обновляем...' : 'Обновить' }}</span>
+          </button>
+        </div>
+      </div>
+
+      <div v-if="!data && !error" class="skeleton-list" aria-label="Загружаем данные суперсвипа">
+        <div v-for="i in 3" :key="i" class="skeleton-row" />
+      </div>
+
+      <div v-else-if="data && !data.available && !active" class="empty-state">
+        <strong>Прогонов пока нет</strong>
+        <p>Выберите режим и параметры выше, затем нажмите кнопку запуска.</p>
+      </div>
+
+      <template v-else-if="data">
+        <div class="sweep-progress-block">
+          <div class="sweep-progress-head">
+            <span>Фаза: <strong>{{ data.phase || '-' }}</strong></span>
+            <span class="mono">{{ data.completed }} / {{ data.total }} ({{ progressPct(data.completed, data.total) }}%)</span>
+          </div>
+          <div
+            class="progress-track"
+            role="progressbar"
+            aria-label="Общий прогресс суперсвипа"
+            :aria-valuenow="data.completed"
+            aria-valuemin="0"
+            :aria-valuemax="data.total || 1"
+          >
+            <div
+              class="progress-fill"
+              :class="{ 'is-ok': data.state === 'done' }"
+              :style="{ width: `${progressPct(data.completed, data.total)}%` }"
+            />
+          </div>
+        </div>
+
+        <div v-if="data.workers.length" class="supersweep-workers">
+          <article v-for="worker in data.workers" :key="worker.name" class="list-row worker-card">
+            <div class="worker-head">
+              <span class="prof-id">{{ worker.profile }}</span>
+              <div class="worker-title">
+                <strong>{{ worker.label || worker.name }}</strong>
+                <span class="mono">{{ worker.completed }} / {{ worker.total }}</span>
+              </div>
+            </div>
+
+            <div
+              class="progress-track"
+              role="progressbar"
+              :aria-label="`Прогресс: ${worker.label || worker.name}`"
+              :aria-valuenow="worker.completed"
+              aria-valuemin="0"
+              :aria-valuemax="worker.total || 1"
+            >
+              <div class="progress-fill" :style="{ width: `${progressPct(worker.completed, worker.total)}%` }" />
+            </div>
+
+            <div class="worker-chips">
+              <span class="chip on">Успех: {{ worker.ok }}</span>
+              <span class="chip is-warn">Предупр.: {{ worker.warn }}</span>
+              <span class="chip is-bad">Ошибки: {{ worker.fail }}</span>
+            </div>
+
+            <dl class="worker-dl">
+              <div><dt>Стратегия</dt><dd class="mono">{{ worker.current_strategy ?? '-' }}</dd></div>
+              <div><dt>Цель</dt><dd class="mono">{{ worker.current_target || '-' }}</dd></div>
+              <div><dt>Зелёные</dt><dd class="mono">{{ worker.greens || '-' }}</dd></div>
+              <div><dt>Жёлтые</dt><dd class="mono">{{ worker.warns || '-' }}</dd></div>
+              <div><dt>Применено</dt><dd class="mono">{{ worker.applied || '-' }}</dd></div>
+            </dl>
           </article>
         </div>
-        <h3>Применённые победители</h3>
-        <p class="supersweep-meta">Применение зафиксировано в этом прогоне; текущие локи — во вкладке «Стратегии».</p>
-        <ul v-if="data.applied.length">
-          <li v-for="(row, index) in data.applied" :key="index">{{ row.kind === 'profile' ? 'Профиль' : 'Домен' }} {{ row.target }} → стратегия {{ row.strategy }}</li>
-        </ul>
-        <p v-else>В этом прогоне стратегии ещё не применялись.</p>
-        <details v-if="data.domains.length">
+
+        <div class="sweep-subsection">
+          <h3>Применённые победители</h3>
+          <p class="panel-sub">Зафиксировано в этом прогоне; актуальные локи всегда видны во вкладке «Стратегии».</p>
+          <div v-if="data.applied.length" class="list-stack applied-list">
+            <div v-for="(row, index) in data.applied" :key="index" class="list-row applied-row">
+              <span>{{ row.kind === 'profile' ? 'Профиль' : 'Домен' }} <strong class="mono">{{ row.target }}</strong></span>
+              <span class="chip on">#{{ row.strategy }}</span>
+            </div>
+          </div>
+          <p v-else class="panel-d empty-sub">В этом прогоне стратегии ещё не применялись.</p>
+        </div>
+
+        <details v-if="data.domains.length" class="domains-fold">
           <summary>Результаты доменов РКН ({{ data.domains.length }})</summary>
-          <ul class="supersweep-domains">
-            <li v-for="row in data.domains" :key="row.domain">
-              <strong>{{ row.domain }}</strong> · <span :class="'supersweep-' + row.verdict">{{ verdicts[row.verdict] }}</span>
-              · Лучшая найденная: {{ row.best_strategy ?? '—' }} · Применена в прогоне: {{ row.applied ?? '—' }}
-            </li>
-          </ul>
+          <div class="list-stack domains-result-list">
+            <div v-for="row in data.domains" :key="row.domain" class="list-row domain-result-row">
+              <strong class="mono">{{ row.domain }}</strong>
+              <div class="actions">
+                <span class="chip" :class="row.verdict === 'ok' ? 'on' : row.verdict === 'warn' ? 'is-warn' : 'is-bad'">
+                  {{ verdicts[row.verdict] }}
+                </span>
+                <span class="chip">лучшая: {{ row.best_strategy ?? '-' }}</span>
+                <span class="chip" :class="{ on: row.applied != null }">применена: {{ row.applied ?? '-' }}</span>
+              </div>
+            </div>
+          </div>
         </details>
       </template>
-    </template>
-  </section>
+    </section>
+  </div>
 </template>
 
 <style scoped>
-.supersweep-panel {
-  margin-bottom: 0.75rem;
-  padding: 0.85rem 0.9rem;
-  border: 1px dashed color-mix(in srgb, var(--line) 80%, var(--muted));
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--surface) 65%, transparent);
-  box-shadow: none;
-  font-size: 0.82rem;
+.sweep-stack { display: grid; gap: 1rem; }
+.sweep-form { margin-top: 0.25rem; }
+.field-full { grid-column: 1 / -1; }
+.sweep-form textarea { min-height: 4.5rem; }
+.quic-live-warn { margin-top: 0.75rem; }
+.sweep-actions { margin-top: 0.85rem; }
+
+.sweep-progress-block {
+  display: grid;
+  gap: 0.45rem;
+  margin-bottom: 0.9rem;
+}
+.sweep-progress-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 0.84rem;
+}
+
+.supersweep-workers {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 270px), 1fr));
+  gap: 0.65rem;
+  margin-bottom: 1rem;
+}
+.worker-card { gap: 0.55rem; }
+.worker-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+.worker-title {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+.worker-title strong {
+  font-size: 0.88rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.worker-title span {
+  color: var(--muted);
+  font-size: 0.76rem;
+  flex-shrink: 0;
+}
+.worker-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+.worker-dl {
+  margin: 0;
+  display: grid;
+  gap: 0.2rem;
+}
+.worker-dl div {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.6rem;
+  font-size: 0.77rem;
+  padding-top: 0.22rem;
+  border-top: 1px solid var(--line);
+}
+.worker-dl dt { color: var(--muted); }
+.worker-dl dd {
+  margin: 0;
+  text-align: right;
   overflow-wrap: anywhere;
-  opacity: 0.95;
 }
-.supersweep-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.65rem; }
-.supersweep-panel h2, .supersweep-panel h3 { margin: 0; font-size: 0.95rem; font-family: var(--font-display); }
-.supersweep-panel h3 { font-size: 0.88rem; }
-.supersweep-panel p { margin: 0.45rem 0; color: var(--muted); }
-.supersweep-panel progress { width: 100%; accent-color: var(--ok); }
-.supersweep-meta { color: var(--muted); font-family: var(--font-mono); font-size: 0.78rem; }
-.supersweep-controls { margin: 0.65rem 0 0.85rem; }
-.supersweep-controls textarea { width: 100%; resize: vertical; min-height: 4.5rem; }
-.supersweep-workers { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 0.65rem; margin: 0.65rem 0; }
-.supersweep-worker { min-width: 0; padding: 0.65rem; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface-2); }
-.supersweep-ok { color: var(--ok); }
-.supersweep-warn { color: var(--warn); }
-.supersweep-error, .supersweep-fail { color: var(--danger); }
-.quic-live-warn {
-  margin: 0.5rem 0;
-  padding: 0.5rem 0.65rem;
-  border: 1px solid color-mix(in srgb, var(--warn) 45%, var(--line));
-  border-radius: var(--radius-sm);
-  color: var(--warn) !important;
+
+.sweep-subsection {
+  display: grid;
+  gap: 0.45rem;
+  margin-top: 0.35rem;
 }
-.supersweep-panel summary { cursor: pointer; margin-top: 0.65rem; }
-.supersweep-domains li { margin: 0.45rem 0; }
+.sweep-subsection h3 {
+  margin: 0;
+  font-size: 0.94rem;
+  font-weight: 700;
+}
+.empty-sub { margin: 0.2rem 0 0; }
+.applied-list { margin-top: 0.25rem; }
+.applied-row,
+.domain-result-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.domains-fold { margin-top: 0.9rem; }
+.domains-fold summary { cursor: pointer; font-size: 0.84rem; color: var(--ink-2); font-weight: 500; }
+.domains-result-list { margin-top: 0.55rem; }
 </style>

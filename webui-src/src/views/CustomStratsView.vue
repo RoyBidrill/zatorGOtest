@@ -7,9 +7,11 @@ import { confirmDialog } from '../stores/confirm'
 import { customBlocks, customStrategies, customStratsLoaded, refreshCustomStrats } from '../stores/customStrats'
 import { refreshAll } from '../stores/status'
 import { announceRestart, restartSuffix, showToast } from '../stores/toast'
+import Icon from '../components/ui/Icon.vue'
 
 const filter = ref('')
 const hasDirty = ref(false)
+const importOpen = ref(false)
 const formOpen = ref(false)
 const modalVisible = ref(false)
 const editId = ref<number | null>(null)
@@ -41,6 +43,12 @@ const filtered = computed(() =>
 
 const pendingCount = computed(() =>
   customStrategies.value.filter((s) => s.enabled && !s.assigned).length)
+
+const needsApplyBanner = computed(() => pendingCount.value > 0 || hasDirty.value)
+
+function blockCount(block: string): number {
+  return customStrategies.value.filter((s) => s.block === block).length
+}
 
 function blockInfo(block: string): CustomBlockInfo | undefined {
   return customBlocks.value.find((b) => b.block === block)
@@ -207,6 +215,7 @@ async function importLines() {
       importErrors.value = Array.isArray(res?.errors) ? res.errors : []
       importNotes.value = Array.isArray(res?.notes) ? res.notes : []
       if ((res?.added ?? 0) > 0) hasDirty.value = true
+      if (importErrors.value.length || importNotes.value.length) importOpen.value = true
       showToast(
         `Импорт: добавлено ${res?.added ?? 0}, дубликатов ${res?.dups ?? 0}, пропущено ${res?.skipped ?? 0}.`
         + (importNotes.value.length ? ` Замен блобов: ${importNotes.value.length}.` : ''),
@@ -258,107 +267,234 @@ async function applyToConfig() {
         <p>Добавление, редактирование, пакетный импорт из blockcheck2 и безопасный инжект в конфиг с сохранением локов.</p>
       </div>
       <div class="actions">
-        <label class="field scope-picker">
-          <span>Блок</span>
-          <select id="custom-strats-filter" v-model="filter" :disabled="busyActive">
-            <option value="">Все блоки</option>
-            <option v-for="b in customBlocks" :key="b.block" :value="b.block">{{ b.block }} — {{ b.label }}</option>
-          </select>
-        </label>
-        <button id="custom-strat-add-btn" type="button" :disabled="busyActive" @click="openAdd">Добавить стратегию</button>
-        <button id="custom-apply-btn" type="button" class="primary"
-          :class="{ 'is-busy': busyButton === 'custom-apply' }"
-          :disabled="busyActive || (!customStrategies.length && !hasDirty)"
-          @click="applyToConfig">
-          Применить к конфигу{{ pendingCount ? ` (${pendingCount})` : hasDirty ? ' *' : '' }}
+        <button
+          id="custom-strat-add-btn"
+          type="button"
+          :class="{ primary: !needsApplyBanner }"
+          :disabled="busyActive"
+          @click="openAdd"
+        >
+          <Icon name="plus" class="icon-sm" />
+          <span>Добавить стратегию</span>
         </button>
-        <button id="refresh-custom-strats" type="button"
+        <button
+          id="refresh-custom-strats"
+          type="button"
           :class="{ 'is-busy': busyButton === 'refresh-custom-strats' }"
-          :disabled="busyActive" @click="refresh">Обновить</button>
+          :disabled="busyActive"
+          @click="refresh"
+        >
+          <Icon name="refresh" class="icon-sm" />
+          <span>Обновить</span>
+        </button>
       </div>
     </div>
 
-    <div v-if="!customStratsLoaded" class="loading">Загрузка…</div>
+    <div
+      v-if="customStratsLoaded && needsApplyBanner"
+      class="notice-banner is-warn"
+      role="region"
+      aria-label="Неприменённые изменения стратегий"
+    >
+      <span>Есть неприменённые изменения своих стратегий: запишите их в конфиг zapret2.</span>
+      <button
+        id="custom-apply-btn"
+        type="button"
+        class="primary"
+        :class="{ 'is-busy': busyButton === 'custom-apply' }"
+        :disabled="busyActive || (!customStrategies.length && !hasDirty)"
+        @click="applyToConfig"
+      >
+        Применить к конфигу{{ pendingCount ? ` (${pendingCount})` : '' }}
+      </button>
+    </div>
+
+    <div class="tabs-bar" role="tablist" aria-label="Фильтр по блокам">
+      <button
+        type="button"
+        role="tab"
+        :aria-selected="filter === ''"
+        class="tab-pill"
+        :class="{ active: filter === '' }"
+        @click="filter = ''"
+      >
+        Все <span class="tab-count">{{ customStrategies.length }}</span>
+      </button>
+      <button
+        v-for="b in customBlocks"
+        :key="b.block"
+        type="button"
+        role="tab"
+        :aria-selected="filter === b.block"
+        class="tab-pill"
+        :class="{ active: filter === b.block }"
+        :title="`${b.label} (профили ${b.profiles})`"
+        @click="filter = b.block"
+      >
+        {{ b.block }} <span class="tab-count">{{ blockCount(b.block) }}</span>
+      </button>
+    </div>
+
+    <div v-if="!customStratsLoaded" class="skeleton-list" aria-label="Загрузка пользовательских стратегий">
+      <div v-for="i in 4" :key="i" class="skeleton-row" />
+    </div>
     <template v-else>
       <section id="custom-strats-panel" class="panel">
         <div class="panel-h">
-          <h2>Список пользовательских стратегий</h2>
-          <span class="chip" :class="{ on: customStrategies.length > 0 }">{{ filtered.length }}</span>
+          <div class="panel-title-group">
+            <h2>Список пользовательских стратегий</h2>
+            <span class="chip" :class="{ on: customStrategies.length > 0 }">{{ filtered.length }}</span>
+          </div>
+          <div class="actions">
+            <button
+              v-if="!needsApplyBanner"
+              id="custom-apply-btn"
+              type="button"
+              class="ghost compact-btn"
+              :class="{ 'is-busy': busyButton === 'custom-apply' }"
+              :disabled="busyActive || (!customStrategies.length && !hasDirty)"
+              @click="applyToConfig"
+            >
+              Применить к конфигу
+            </button>
+            <button
+              type="button"
+              class="ghost compact-btn"
+              :disabled="busyActive"
+              @click="importOpen = !importOpen"
+            >
+              {{ importOpen ? 'Скрыть импорт' : 'Импорт списком' }}
+            </button>
+          </div>
         </div>
-        <p v-if="!filtered.length" class="panel-d">
-          В выбранном фильтре стратегий пока нет. Нажмите «Добавить стратегию» или используйте импорт ниже.
-        </p>
-        <div v-else class="strat-list">
-          <article v-for="item in filtered" :id="`custom-strat-row-${item.id}`" :key="item.id"
-            class="strat-row" :class="{ 'is-off': !item.enabled }">
-            <div class="strat-head">
-              <span class="chip">ID {{ item.id }}</span>
-              <span class="chip">{{ item.block }}</span>
-              <span v-if="!item.enabled" class="chip">выкл</span>
-              <span v-else-if="item.assigned" class="chip on">#{{ item.assigned }}</span>
-              <span v-else class="chip is-pending">не применена</span>
-              <span v-if="item.comment" class="strat-comment">{{ item.comment }}</span>
+
+        <section v-show="importOpen" id="custom-import-panel" class="import-drawer" aria-label="Пакетный импорт">
+          <div class="panel-h">
+            <div>
+              <h3>Пакетный импорт (blockcheck2 / nfqws2)</h3>
+              <p class="panel-sub">Вставьте строки из SUMMARY blockcheck2, команды nfqws2 или готовые <code>--lua-desync=...</code>.</p>
             </div>
-            <pre class="mono strat-spec">{{ item.spec }}</pre>
-            <div class="actions">
-              <button type="button" :disabled="busyActive"
-                :class="{ 'is-busy': busyButton === `custom-enable-${item.id}` }"
-                @click="toggleEnabled(item)">{{ item.enabled ? 'Выключить' : 'Включить' }}</button>
-              <button type="button" class="ghost" :disabled="busyActive" @click="openEdit(item)">Изменить</button>
-              <button type="button" class="ghost danger" :disabled="busyActive"
-                :class="{ 'is-busy': busyButton === `custom-delete-${item.id}` }"
-                @click="removeItem(item)">Удалить</button>
+            <span class="chip">до 256 записей</span>
+          </div>
+
+          <div class="grid-2 import-block-row">
+            <label class="field">
+              <span>Целевой блок</span>
+              <select id="custom-import-block" v-model="importBlock" :disabled="busyActive">
+                <option v-for="b in customBlocks" :key="b.block" :value="b.block">
+                  {{ b.block }} - {{ b.label }} (профили {{ b.profiles }})
+                </option>
+              </select>
+            </label>
+          </div>
+
+          <label class="field">
+            <span>Строки стратегий</span>
+            <textarea
+              id="custom-import-text"
+              v-model="importText"
+              rows="5"
+              :disabled="busyActive"
+              placeholder="nfqws2 --lua-desync=fake:blob=fake_default_tls:repeats=2 --lua-desync=multisplit:pos=1,midsld"
+            />
+          </label>
+
+          <div class="actions">
+            <button
+              id="custom-import-btn"
+              type="button"
+              class="primary compact-btn"
+              :class="{ 'is-busy': busyButton === 'custom-import' }"
+              :disabled="busyActive || !importText.trim()"
+              @click="importLines"
+            >
+              Импортировать
+            </button>
+            <button type="button" class="ghost compact-btn" :disabled="busyActive" @click="importOpen = false">Скрыть</button>
+          </div>
+
+          <div v-if="importNotes.length" class="import-feedback">
+            <strong>Замены блобов:</strong>
+            <ul>
+              <li v-for="(n, i) in importNotes" :key="i">{{ n }}</li>
+            </ul>
+          </div>
+          <div v-if="importErrors.length" class="import-feedback is-error">
+            <strong>Отклонённые строки ({{ importErrors.length }}):</strong>
+            <ul>
+              <li v-for="(err, i) in importErrors" :key="i">
+                <code>{{ err.line }}</code> - {{ err.reason }}
+              </li>
+            </ul>
+          </div>
+        </section>
+
+        <div v-if="!filtered.length" class="empty-state">
+          <strong>Стратегий пока нет</strong>
+          <p>В выбранном фильтре нет записей. Нажмите «Добавить стратегию» или откройте «Импорт списком».</p>
+        </div>
+        <div v-else class="list-stack">
+          <article
+            v-for="item in filtered"
+            :id="`custom-strat-row-${item.id}`"
+            :key="item.id"
+            class="list-row strat-row"
+            :class="{ 'is-muted': !item.enabled }"
+          >
+            <div class="strat-row-top">
+              <div class="strat-head">
+                <span class="chip">ID {{ item.id }}</span>
+                <span class="chip is-info">{{ item.block }}</span>
+                <span v-if="!item.enabled" class="chip">выкл</span>
+                <span v-else-if="item.assigned" class="chip on">#{{ item.assigned }}</span>
+                <span v-else class="chip is-pending">не применена</span>
+                <span v-if="item.comment" class="strat-comment">{{ item.comment }}</span>
+              </div>
+              <div class="actions">
+                <button
+                  type="button"
+                  class="ghost compact-btn"
+                  :disabled="busyActive"
+                  :class="{ 'is-busy': busyButton === `custom-enable-${item.id}` }"
+                  @click="toggleEnabled(item)"
+                >
+                  {{ item.enabled ? 'Выключить' : 'Включить' }}
+                </button>
+                <button
+                  type="button"
+                  class="ghost icon-btn"
+                  aria-label="Изменить"
+                  title="Изменить"
+                  :disabled="busyActive"
+                  @click="openEdit(item)"
+                >
+                  <Icon name="pencil" class="icon-sm" />
+                </button>
+                <button
+                  type="button"
+                  class="ghost danger icon-btn"
+                  aria-label="Удалить"
+                  title="Удалить"
+                  :disabled="busyActive"
+                  :class="{ 'is-busy': busyButton === `custom-delete-${item.id}` }"
+                  @click="removeItem(item)"
+                >
+                  <Icon name="trash" class="icon-sm" />
+                </button>
+              </div>
             </div>
+            <pre class="code-block">{{ item.spec }}</pre>
           </article>
         </div>
       </section>
 
-      <section id="custom-import-panel" class="panel">
-        <div class="panel-h">
-          <h2>Пакетный импорт (blockcheck2 / nfqws2)</h2>
-          <span class="chip">до 256 записей</span>
-        </div>
-        <p class="panel-d">
-          Вставьте строки из SUMMARY blockcheck2, команды nfqws2 или готовые <code>--lua-desync=...</code>. Неизвестные блобы заменятся на штатные, стратегии от zapret v1 будут отклонены.
-        </p>
-        <div class="grid-2" style="margin-bottom:0.65rem">
-          <label class="field">
-            <span>Целевой блок</span>
-            <select id="custom-import-block" v-model="importBlock" :disabled="busyActive">
-              <option v-for="b in customBlocks" :key="b.block" :value="b.block">
-                {{ b.block }} — {{ b.label }} (профили {{ b.profiles }})
-              </option>
-            </select>
-          </label>
-        </div>
-        <label class="field">
-          <span>Строки стратегий</span>
-          <textarea id="custom-import-text" v-model="importText" rows="5" :disabled="busyActive"
-            placeholder="nfqws2 --lua-desync=fake:blob=fake_default_tls:repeats=2 --lua-desync=multisplit:pos=1,midsld"></textarea>
-        </label>
-        <div class="actions" style="margin-top:0.75rem">
-          <button id="custom-import-btn" type="button" class="primary"
-            :class="{ 'is-busy': busyButton === 'custom-import' }"
-            :disabled="busyActive || !importText.trim()" @click="importLines">Импортировать</button>
-        </div>
-        <div v-if="importNotes.length" class="import-feedback">
-          <strong>Замены блобов:</strong>
-          <ul>
-            <li v-for="(n, i) in importNotes" :key="i">{{ n }}</li>
-          </ul>
-        </div>
-        <div v-if="importErrors.length" class="import-feedback is-error">
-          <strong>Отклонённые строки ({{ importErrors.length }}):</strong>
-          <ul>
-            <li v-for="(err, i) in importErrors" :key="i">
-              <code>{{ err.line }}</code> — {{ err.reason }}
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <div v-if="formOpen" :class="['modal-overlay', { 'is-visible': modalVisible }]"
-        role="dialog" aria-modal="true" @click.self="cancelForm">
+      <div
+        v-if="formOpen"
+        :class="['modal-overlay', { 'is-visible': modalVisible }]"
+        role="dialog"
+        aria-modal="true"
+        @click.self="cancelForm"
+      >
         <form id="custom-strat-form" class="modal-card modal-wide" @submit.prevent="saveForm">
           <h3 class="modal-title">{{ editId === null ? 'Новая стратегия' : `Стратегия #${editId}` }}</h3>
           <div class="modal-fields">
@@ -366,19 +502,31 @@ async function applyToConfig() {
               <span>Блок</span>
               <select id="custom-strat-block" v-model="formBlock" :disabled="busyActive">
                 <option v-for="b in customBlocks" :key="b.block" :value="b.block">
-                  {{ b.block }} — {{ b.label }} ({{ b.transport.toUpperCase() }})
+                  {{ b.block }} - {{ b.label }} ({{ b.transport.toUpperCase() }})
                 </option>
               </select>
             </label>
             <label class="field">
               <span>Спецификация desync</span>
-              <textarea id="custom-strat-spec" ref="specField" v-model="formSpec" rows="4" :disabled="busyActive"
-                placeholder="fake:blob=maxru:tcp_md5:pos=2:repeats=2"></textarea>
+              <textarea
+                id="custom-strat-spec"
+                ref="specField"
+                v-model="formSpec"
+                rows="4"
+                :disabled="busyActive"
+                placeholder="fake:blob=maxru:tcp_md5:pos=2:repeats=2"
+              />
             </label>
             <div class="example-box">
               <span>Пример: <code>{{ formExamples.single }}</code></span>
-              <button type="button" class="ghost example-btn" :disabled="busyActive"
-                @click="formSpec = formExamples.single; formError = ''">Вставить</button>
+              <button
+                type="button"
+                class="ghost compact-btn example-btn"
+                :disabled="busyActive"
+                @click="formSpec = formExamples.single; formError = ''"
+              >
+                Вставить пример
+              </button>
               <div>Комбо: <code>{{ formExamples.combo }}</code></div>
             </div>
             <label class="field">
@@ -389,9 +537,15 @@ async function applyToConfig() {
           </div>
           <div class="modal-actions">
             <button id="custom-strat-cancel" type="button" class="ghost" :disabled="busyActive" @click="cancelForm">Отмена</button>
-            <button id="custom-strat-save" type="submit" class="primary"
+            <button
+              id="custom-strat-save"
+              type="submit"
+              class="primary"
               :class="{ 'is-busy': busyButton === (editId === null ? 'custom-add' : `custom-edit-${editId}`) }"
-              :disabled="saveDisabled">{{ editId === null ? 'Добавить' : 'Сохранить' }}</button>
+              :disabled="saveDisabled"
+            >
+              {{ editId === null ? 'Добавить' : 'Сохранить' }}
+            </button>
           </div>
         </form>
       </div>
@@ -400,44 +554,53 @@ async function applyToConfig() {
 </template>
 
 <style scoped>
-.strat-list { display: grid; gap: 0.6rem; }
-.strat-row {
-  display: grid;
-  gap: 0.45rem;
-  padding: 0.7rem 0.75rem;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--bg1) 50%, transparent);
+.panel-title-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
 }
-.strat-row.is-off { opacity: 0.65; }
-.strat-row.is-target { border-color: var(--accent); }
+.import-drawer {
+  display: grid;
+  gap: 0.75rem;
+  margin-bottom: 0.95rem;
+  padding: 0.9rem 0.95rem;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+.import-drawer h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+.import-block-row { margin-bottom: 0; }
+.strat-row-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.45rem 0.75rem;
+}
 .strat-head { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; }
 .strat-comment { color: var(--muted); font-size: 0.84rem; }
-.chip.is-pending { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, var(--line)); font-weight: 600; }
-.strat-spec {
-  margin: 0;
-  padding: 0.5rem 0.6rem;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  background: var(--surface-2);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  font-size: 0.8rem;
-}
 .import-feedback {
-  margin-top: 0.75rem;
-  padding: 0.65rem 0.75rem;
+  padding: 0.65rem 0.78rem;
   border-radius: var(--radius-sm);
   border: 1px solid var(--line);
-  background: color-mix(in srgb, var(--bg1) 55%, transparent);
+  background: var(--surface);
   font-size: 0.82rem;
 }
-.import-feedback.is-error { border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); }
+.import-feedback.is-error {
+  border-color: color-mix(in srgb, var(--danger) 42%, var(--line));
+}
 .import-feedback ul { margin: 0.35rem 0 0; padding-left: 1.2rem; }
-.modal-wide { width: min(580px, 100%); }
-.modal-fields { display: grid; gap: 0.65rem; margin: 0.65rem 0; }
-.example-box { font-size: 0.78rem; color: var(--muted); display: grid; gap: 0.3rem; }
-.example-box code { color: var(--ink); overflow-wrap: anywhere; }
-.example-btn { width: fit-content; padding: 0.2rem 0.55rem; font-size: 0.76rem; }
-.err-hint { color: var(--danger); font-size: 0.84rem; margin: 0; }
+.example-box {
+  font-size: 0.78rem;
+  color: var(--muted);
+  display: grid;
+  gap: 0.35rem;
+}
+.example-box code { overflow-wrap: anywhere; }
+.example-btn { width: fit-content; }
 </style>

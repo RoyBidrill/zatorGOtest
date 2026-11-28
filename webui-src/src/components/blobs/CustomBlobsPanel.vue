@@ -6,6 +6,7 @@ import { busyActive, busyButton, withBusy } from '../../stores/busy'
 import { confirmDialog } from '../../stores/confirm'
 import { customBlobsPayload } from '../../stores/sni'
 import { showToast } from '../../stores/toast'
+import Icon from '../ui/Icon.vue'
 
 const emit = defineEmits<{ dirty: []; reload: [] }>()
 
@@ -178,7 +179,7 @@ async function removeItem(item: CustomBlobInfo) {
   const ok = await confirmDialog({
     title: `Удалить блоб «${item.name}»?`,
     message: item.refs > 0
-      ? `Блоб используется в ${item.refs} пользовательских стратегиях — удаление будет отклонено, пока ссылки не убраны.`
+      ? `Блоб используется в ${item.refs} пользовательских стратегиях: удаление будет отклонено, пока ссылки не убраны.`
       : 'Декларация и файл будут удалены (если на файл нет других ссылок).',
     confirmText: 'Удалить',
     danger: true,
@@ -202,34 +203,50 @@ async function removeItem(item: CustomBlobInfo) {
     <div class="panel-h">
       <div>
         <h2>Пользовательские блобы</h2>
-        <span class="subcopy">Декларации <code>--blob=ИМЯ:@файл</code> для использования в «Своих стратегиях»</span>
+        <p class="panel-sub">Декларации <code>--blob=ИМЯ:@файл</code> для использования в «Своих стратегиях»</p>
       </div>
       <div class="actions">
         <span v-if="blobs.length && !configDirty" class="chip on">Синхронизировано с конфигом</span>
-        <button id="custom-blob-add" type="button" class="primary" :disabled="busyActive || !files.length"
-          @click="openAdd">+ Добавить блоб</button>
+        <button id="custom-blob-add" type="button" class="primary" :disabled="busyActive || !files.length" @click="openAdd">
+          <Icon name="plus" class="icon-sm" />
+          <span>Добавить блоб</span>
+        </button>
       </div>
     </div>
 
     <div class="upload-strip">
-      <label class="field">
-        <span>Загрузить бинарный файл (1 Б – 256 КиБ, в <code>{{ dir }}</code>)</span>
-        <input id="custom-blob-file" ref="fileInput" type="file" :disabled="busyActive" @change="onFileChange">
-      </label>
+      <div class="field">
+        <span class="field-caption">Загрузить бинарный файл (1 Б - 256 КиБ, в <code>{{ dir }}</code>)</span>
+        <div class="file-picker">
+          <label class="file-picker-btn" :class="{ 'is-disabled': busyActive }" for="custom-blob-file">
+            <Icon name="upload" class="icon-sm" />
+            <span>Выбрать файл</span>
+          </label>
+          <input id="custom-blob-file" ref="fileInput" class="sr-only" type="file" :disabled="busyActive" @change="onFileChange">
+          <span class="file-picker-name">{{ uploadFile ? uploadFile.name : 'Файл не выбран' }}</span>
+          <span v-if="uploadFile" class="chip">{{ formatSize(uploadFile.size) }}</span>
+        </div>
+      </div>
       <div class="actions">
-        <span v-if="uploadFile" class="chip">{{ formatSize(uploadFile.size) }}</span>
-        <button id="custom-blob-upload-btn" type="button"
+        <button
+          id="custom-blob-upload-btn"
+          type="button"
           :class="{ 'is-busy': busyButton === 'custom-blob-upload' }"
-          :disabled="busyActive || !uploadFile" @click="upload">Загрузить файл</button>
+          :disabled="busyActive || !uploadFile"
+          @click="upload"
+        >
+          Загрузить файл
+        </button>
       </div>
     </div>
 
-    <p v-if="!blobs.length" class="panel-d">
-      Своих блобов пока нет. {{ files.length ? 'Нажмите «+ Добавить блоб» выше.' : 'Загрузите .bin файл выше (декларация создастся автоматически).' }}
-    </p>
+    <div v-if="!blobs.length" class="empty-state">
+      <strong>Своих блобов пока нет</strong>
+      <p>{{ files.length ? 'Нажмите «Добавить блоб» выше.' : 'Загрузите .bin файл выше, декларация создастся автоматически.' }}</p>
+    </div>
 
-    <div v-else class="blob-list">
-      <article v-for="item in blobs" :id="`custom-blob-row-${item.id}`" :key="item.id" class="blob-row">
+    <div v-else class="list-stack">
+      <article v-for="item in blobs" :id="`custom-blob-row-${item.id}`" :key="item.id" class="list-row blob-row">
         <div class="blob-top">
           <div class="blob-meta">
             <strong class="mono">{{ item.name }}</strong>
@@ -240,10 +257,27 @@ async function removeItem(item: CustomBlobInfo) {
             <span v-if="item.comment" class="blob-comment">{{ item.comment }}</span>
           </div>
           <div class="actions">
-            <button type="button" class="ghost" :disabled="busyActive" @click="openEdit(item)">Изменить</button>
-            <button type="button" class="ghost danger" :disabled="busyActive"
+            <button
+              type="button"
+              class="ghost icon-btn"
+              aria-label="Изменить"
+              title="Изменить"
+              :disabled="busyActive"
+              @click="openEdit(item)"
+            >
+              <Icon name="pencil" class="icon-sm" />
+            </button>
+            <button
+              type="button"
+              class="ghost danger icon-btn"
+              aria-label="Удалить"
+              title="Удалить"
+              :disabled="busyActive"
               :class="{ 'is-busy': busyButton === `custom-blob-delete-${item.id}` }"
-              @click="removeItem(item)">Удалить</button>
+              @click="removeItem(item)"
+            >
+              <Icon name="trash" class="icon-sm" />
+            </button>
           </div>
         </div>
         <code class="mono blob-spec">--blob={{ item.name }}:@{{ dir }}/{{ item.file }}</code>
@@ -257,15 +291,27 @@ async function removeItem(item: CustomBlobInfo) {
       </div>
     </details>
 
-    <div v-if="formOpen" :class="['modal-overlay', { 'is-visible': modalVisible }]"
-      role="dialog" aria-modal="true" @click.self="cancelForm">
+    <div
+      v-if="formOpen"
+      :class="['modal-overlay', { 'is-visible': modalVisible }]"
+      role="dialog"
+      aria-modal="true"
+      @click.self="cancelForm"
+    >
       <form id="custom-blob-form" class="modal-card modal-wide" @submit.prevent="saveForm">
         <h3 class="modal-title">{{ editId === null ? 'Новый блоб' : `Блоб #${editId}` }}</h3>
         <div class="modal-fields">
           <label class="field">
-            <span>Имя блоба (--blob=ИМЯ:@…)</span>
-            <input id="custom-blob-name" ref="nameField" v-model="formName" type="text"
-              maxlength="32" placeholder="my_fake_tls" :disabled="busyActive">
+            <span>Имя блоба (--blob=ИМЯ:@...)</span>
+            <input
+              id="custom-blob-name"
+              ref="nameField"
+              v-model="formName"
+              type="text"
+              maxlength="32"
+              placeholder="my_fake_tls"
+              :disabled="busyActive"
+            >
           </label>
           <p v-if="nameTakenHint" class="warn-hint">{{ nameTakenHint }}</p>
           <label class="field">
@@ -278,16 +324,22 @@ async function removeItem(item: CustomBlobInfo) {
             <span>Комментарий (необязательно)</span>
             <input id="custom-blob-comment" v-model="formComment" type="text" maxlength="64" :disabled="busyActive">
           </label>
-          <p class="panel-d" style="margin:0">
+          <p class="modal-note">
             При переименовании ссылки в «Своих стратегиях» обновятся автоматически (всего ссылок: {{ refsTotal }}).
           </p>
           <p v-if="formError" id="custom-blob-error" class="err-hint" role="alert">{{ formError }}</p>
         </div>
         <div class="modal-actions">
           <button id="custom-blob-cancel" type="button" class="ghost" :disabled="busyActive" @click="cancelForm">Отмена</button>
-          <button id="custom-blob-save" type="submit" class="primary"
+          <button
+            id="custom-blob-save"
+            type="submit"
+            class="primary"
             :class="{ 'is-busy': busyButton === (editId === null ? 'custom-blob-add' : `custom-blob-edit-${editId}`) }"
-            :disabled="saveDisabled">{{ editId === null ? 'Добавить' : 'Сохранить' }}</button>
+            :disabled="saveDisabled"
+          >
+            {{ editId === null ? 'Добавить' : 'Сохранить' }}
+          </button>
         </div>
       </form>
     </div>
@@ -295,43 +347,35 @@ async function removeItem(item: CustomBlobInfo) {
 </template>
 
 <style scoped>
-.subcopy { display: block; margin-top: 0.2rem; color: var(--muted); font-size: 0.82rem; }
 .upload-strip {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 0.65rem;
+  gap: 0.75rem;
   align-items: end;
-  margin: 0.75rem 0;
-  padding: 0.75rem;
-  border: 1px dashed var(--line);
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--bg1) 45%, transparent);
+  margin: 0.75rem 0 0.9rem;
+  padding: 0.8rem 0.85rem;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
 }
-.blob-list { display: grid; gap: 0.55rem; }
-.blob-row {
-  display: grid;
-  gap: 0.4rem;
-  padding: 0.65rem 0.75rem;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--bg1) 45%, transparent);
-}
-.blob-row.is-target { border-color: var(--accent); }
 .blob-top { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 0.5rem; }
 .blob-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; min-width: 0; }
 .blob-comment { color: var(--muted); font-size: 0.82rem; }
 .blob-spec {
+  background: transparent;
+  padding: 0;
   color: var(--muted);
   font-size: 0.76rem;
   overflow-wrap: anywhere;
 }
-.stock-fold { margin-top: 0.85rem; }
+.stock-fold { margin-top: 0.9rem; }
 .stock-fold summary { cursor: pointer; color: var(--muted); font-size: 0.8rem; }
 .stock-list { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-top: 0.5rem; }
-.modal-wide { width: min(540px, 100%); }
-.modal-fields { display: grid; gap: 0.65rem; margin: 0.65rem 0; }
-.warn-hint { color: var(--warn); font-size: 0.82rem; margin: 0; }
-.err-hint { color: var(--danger); font-size: 0.84rem; margin: 0; }
+.modal-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
 
 @media (max-width: 680px) {
   .upload-strip { grid-template-columns: 1fr; }

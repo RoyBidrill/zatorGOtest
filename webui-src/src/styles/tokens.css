@@ -1,0 +1,176 @@
+/* ZatorGO Design Tokens — Precision Operator (Light + Dark + Auto) */
+
+:root,
+html[data-theme="light"] {
+  color-scheme: light;
+
+  /* Surfaces */
+  --bg-canvas: #eef2f6;
+  --bg-subtle: #e5ecf2;
+  --surface: #ffffff;
+  --surface-2: #f6f9fb;
+  --surface-hover: #edf3f8;
+  --rail: rgba(247, 250, 252, 0.96);
+  --topbar: rgba(244, 248, 251, 0.88);
+  --backdrop: rgba(15, 23, 42, 0.42);
+
+  /* Ink & Borders */
+  --ink: #0f172a;
+  --ink-2: #334155;
+  --muted: #526377;
+  --line: rgba(15, 23, 42, 0.10);
+  --line-strong: rgba(15, 23, 42, 0.19);
+  --inner-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+
+  /* Single Accent (WCAG AA >= 5.1:1 on white and with accent-ink) */
+  --accent: #0f7b76;
+  --accent-hover: #0c6763;
+  --accent-ink: #f7fffe;
+  --accent-soft: rgba(15, 123, 118, 0.11);
+  --accent-ring: rgba(15, 123, 118, 0.28);
+
+  /* Semantic */
+  --ok: #157a49;
+  --ok-soft: rgba(21, 122, 73, 0.11);
+  --warn: #9a5b00;
+  --warn-soft: rgba(154, 91, 0, 0.11);
+  --danger: #b92b27;
+  --danger-soft: rgba(185, 43, 39, 0.10);
+  --info: var(--accent);
+  --info-soft: var(--accent-soft);
+
+  /* Switch */
+  --toggle-off-bg: #dce4ed;
+  --toggle-off-border: #94a3b8;
+  --toggle-knob: #ffffff;
+  --toggle-on-knob: #ffffff;
+
+  /* Tinted Shadows */
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.05);
+  --shadow: 0 10px 28px -10px rgba(15, 23, 42, 0.10), 0 2px 6px rgba(15, 23, 42, 0.04);
+  --shadow-modal: 0 24px 60px -12px rgba(15, 23, 42, 0.24);
+
+  /* Typography */
+  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Roboto, Arial, sans-serif;
+  --font-mono: ui-monospace, "Cascadia Mono", "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
+  --font-display: var(--font-sans);
+  --font-body: var(--font-sans);
+
+  /* Shape Scale */
+  --radius-lg: 14px;
+  --radius-md: 10px;
+  --radius-sm: 8px;
+  --radius-xs: 6px;
+  --radius-pill: 999px;
+  --radius: var(--radius-lg);
+
+  /* Layout & Layers */
+  --rail-w: 248px;
+  --topbar-h: 60px;
+  --tabbar-h: 58px;
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+
+  --z-base: 1;
+  --z-sticky: 10;
+  --z-topbar: 20;
+  --z-rail: 25;
+  --z-tabbar: 30;
+  --z-toast: 40;
+  --z-modal: 50;
+}
+
+html[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg-canvas: #0b111d;
+  --bg-subtle: #0f1726;
+  --surface: #121c2e;
+  --surface-2: #0e1625;
+  --surface-hover: #18253c;
+  --rail: rgba(11, 17, 29, 0.96);
+  --topbar: rgba(11, 17, 29, 0.86);
+  --backdrop: rgba(3, 7, 16, 0.68);
+
+  --ink: #ebf1f8;
+  --ink-2: #c5d2e2;
+  --muted: #8ea0b5;
+  --line: rgba(194, 212, 235, 0.10);
+  --line-strong: rgba(194, 212, 235, 0.20);
+  --inner-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+
+  --accent: #4cc7be;
+  --accent-hover: #62d6cd;
+  --accent-ink: #051918;
+  --accent-soft: rgba(76, 199, 190, 0.13);
+  --accent-ring: rgba(76, 199, 190, 0.30);
+
+  --ok: #4dd096;
+  --ok-soft: rgba(77, 208, 150, 0.13);
+  --warn: #e6bd5c;
+  --warn-soft: rgba(230, 189, 92, 0.13);
+  --danger: #f57c75;
+  --danger-soft: rgba(245, 124, 117, 0.13);
+  --info: var(--accent);
+  --info-soft: var(--accent-soft);
+
+  --toggle-off-bg: #243349;
+  --toggle-off-border: #60748c;
+  --toggle-knob: #e6eff9;
+  --toggle-on-knob: #052624;
+
+  --shadow-sm: 0 1px 2px rgba(2, 6, 14, 0.35);
+  --shadow: 0 14px 36px -12px rgba(2, 6, 14, 0.55);
+  --shadow-modal: 0 28px 70px -12px rgba(2, 6, 14, 0.72);
+}
+
+@media (prefers-color-scheme: dark) {
+  html[data-theme="auto"] {
+    color-scheme: dark;
+
+    --bg-canvas: #0b111d;
+    --bg-subtle: #0f1726;
+    --surface: #121c2e;
+    --surface-2: #0e1625;
+    --surface-hover: #18253c;
+    --rail: rgba(11, 17, 29, 0.96);
+    --topbar: rgba(11, 17, 29, 0.86);
+    --backdrop: rgba(3, 7, 16, 0.68);
+
+    --ink: #ebf1f8;
+    --ink-2: #c5d2e2;
+    --muted: #8ea0b5;
+    --line: rgba(194, 212, 235, 0.10);
+    --line-strong: rgba(194, 212, 235, 0.20);
+    --inner-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+
+    --accent: #4cc7be;
+    --accent-hover: #62d6cd;
+    --accent-ink: #051918;
+    --accent-soft: rgba(76, 199, 190, 0.13);
+    --accent-ring: rgba(76, 199, 190, 0.30);
+
+    --ok: #4dd096;
+    --ok-soft: rgba(77, 208, 150, 0.13);
+    --warn: #e6bd5c;
+    --warn-soft: rgba(230, 189, 92, 0.13);
+    --danger: #f57c75;
+    --danger-soft: rgba(245, 124, 117, 0.13);
+    --info: var(--accent);
+    --info-soft: var(--accent-soft);
+
+    --toggle-off-bg: #243349;
+    --toggle-off-border: #60748c;
+    --toggle-knob: #e6eff9;
+    --toggle-on-knob: #052624;
+
+    --shadow-sm: 0 1px 2px rgba(2, 6, 14, 0.35);
+    --shadow: 0 14px 36px -12px rgba(2, 6, 14, 0.55);
+    --shadow-modal: 0 28px 70px -12px rgba(2, 6, 14, 0.72);
+  }
+}
+
+@media (prefers-color-scheme: light) {
+  html[data-theme="auto"] {
+    color-scheme: light;
+  }
+}

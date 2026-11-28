@@ -7,8 +7,9 @@ import {
   zapretBranchLabel, zapretBranchShort, zapretReleases, zapretReleasesError, zapretReleasesState,
   type ZapretSource,
 } from '../../stores/zapretReleases'
+import Icon from './Icon.vue'
 
-const props = defineProps<{ compact?: boolean }>()
+defineProps<{ compact?: boolean }>()
 
 const installedVersion = computed(
   () => zapretReleases.value?.installed.version || versionInfo.value?.zapret2_version || '',
@@ -85,21 +86,45 @@ function installCompact() {
 
 <template>
   <div v-if="compact" class="zapret-compact">
-    <div class="zapret-branch-tabs" role="tablist" aria-label="Ветка zapret2">
-      <button type="button" class="zapret-tab" :class="{ 'is-active': selectedSource === 'fork' }" :disabled="busyActive" @click="selectBranch('fork')">
-        reasm-fix ({{ forkList.length }})
+    <div class="zapret-compact-head">
+      <div class="seg-group seg-sm" role="tablist" aria-label="Ветка zapret2">
+        <button
+          type="button"
+          role="tab"
+          :aria-selected="selectedSource === 'fork'"
+          :class="{ active: selectedSource === 'fork' }"
+          :disabled="busyActive"
+          @click="selectBranch('fork')"
+        >
+          reasm-fix ({{ forkList.length }})
+        </button>
+        <button
+          type="button"
+          role="tab"
+          :aria-selected="selectedSource === 'official'"
+          :class="{ active: selectedSource === 'official' }"
+          :disabled="busyActive"
+          @click="selectBranch('official')"
+        >
+          Обычная ({{ officialList.length }})
+        </button>
+      </div>
+      <button
+        type="button"
+        class="icon-btn ghost"
+        title="Обновить список релизов"
+        aria-label="Обновить список релизов"
+        :disabled="busyActive || zapretReleasesState === 'loading'"
+        @click="loadZapretReleases(true)"
+      >
+        <Icon name="refresh" class="icon-sm" />
       </button>
-      <button type="button" class="zapret-tab" :class="{ 'is-active': selectedSource === 'official' }" :disabled="busyActive" @click="selectBranch('official')">
-        Обычная ({{ officialList.length }})
-      </button>
-      <button type="button" class="icon-action zapret-refresh" title="Обновить список релизов" aria-label="Обновить список релизов"
-        :disabled="busyActive || zapretReleasesState === 'loading'" @click="loadZapretReleases(true)">↻</button>
     </div>
 
     <p v-if="latestForInstalledBranch" class="zapret-hint">
       Доступно обновление: <strong>v{{ latestForInstalledBranch }}</strong>
     </p>
-    <p v-if="zapretReleasesState === 'loading' && !activeList.length" class="panel-d">Загружаем релизы с GitHub…</p>
+    <p v-if="zapretReleasesState === 'loading' && !activeList.length" class="panel-d">Загружаем релизы с GitHub...</p>
     <p v-else-if="zapretReleasesState === 'error' && !activeList.length" class="error-text">{{ zapretReleasesError }}</p>
     <p v-else-if="branchError && !activeList.length" class="error-text">{{ branchError }}</p>
 
@@ -109,13 +134,20 @@ function installCompact() {
           {{ rel.tag }}{{ shortDate(rel.published_at) ? ` · ${shortDate(rel.published_at)}` : '' }}{{ isCurrent(rel.source, rel.version) ? ' (установлена)' : '' }}
         </option>
       </select>
-      <button type="button" class="primary" :disabled="busyActive || !selectedVersion"
-        :class="{ 'is-busy': busyButton === 'zapret-version' }" @click="installCompact">
+      <button
+        type="button"
+        class="primary"
+        :disabled="busyActive || !selectedVersion"
+        :class="{ 'is-busy': busyButton === 'zapret-version' }"
+        @click="installCompact"
+      >
         {{ compactActionLabel }}
       </button>
     </div>
     <div v-else-if="zapretReleasesState === 'idle'" class="actions">
-      <button type="button" class="secondary-button" :disabled="busyActive" @click="loadZapretReleases(false)">Загрузить версии</button>
+      <button type="button" class="secondary-button compact-btn" :disabled="busyActive" @click="loadZapretReleases(false)">
+        Загрузить версии
+      </button>
     </div>
   </div>
 
@@ -128,54 +160,162 @@ function installCompact() {
       </span>
       <span v-else class="chip">не определена</span>
     </div>
+
     <p class="panel-d">
       Установлено:
-      <strong>{{ installedVersion ? (installedVersion === 'self-built' ? 'self-built' : `v${installedVersion}`) : '—' }}</strong>
+      <strong>{{ installedVersion ? (installedVersion === 'self-built' ? 'self-built' : `v${installedVersion}`) : '-' }}</strong>
       <template v-if="installedSource"> · {{ zapretBranchLabel(installedSource) }}</template>
       <template v-if="installedArch"> · <code>{{ installedArch }}</code></template>
       <template v-if="zapretReleases?.embedded"> · openwrt-embedded</template>
-      <span v-if="latestForInstalledBranch" class="chip on" style="margin-left:0.5rem">
+      <span v-if="latestForInstalledBranch" class="chip on zapret-inline-badge">
         Доступна v{{ latestForInstalledBranch }}
       </span>
     </p>
 
-    <div class="actions" style="margin-top:0.6rem">
-      <button type="button" :class="selectedSource === 'fork' ? 'primary' : 'secondary-button'" :disabled="busyActive" @click="selectBranch('fork')">
-        reasm-fix · MarkinAlexander ({{ forkList.length }})
-      </button>
-      <button type="button" :class="selectedSource === 'official' ? 'primary' : 'secondary-button'" :disabled="busyActive" @click="selectBranch('official')">
-        Обычная · bol-van ({{ officialList.length }})
-      </button>
-      <button type="button" class="ghost" :disabled="busyActive || zapretReleasesState === 'loading'"
-        :class="{ 'is-busy': zapretReleasesState === 'loading' }" @click="loadZapretReleases(true)">
-        {{ zapretReleasesState === 'loading' ? 'Обновление…' : 'Проверить релизы' }}
+    <div class="zapret-toolbar">
+      <div class="seg-group" role="tablist" aria-label="Ветка zapret2">
+        <button
+          type="button"
+          role="tab"
+          :aria-selected="selectedSource === 'fork'"
+          :class="{ active: selectedSource === 'fork' }"
+          :disabled="busyActive"
+          @click="selectBranch('fork')"
+        >
+          reasm-fix · MarkinAlexander ({{ forkList.length }})
+        </button>
+        <button
+          type="button"
+          role="tab"
+          :aria-selected="selectedSource === 'official'"
+          :class="{ active: selectedSource === 'official' }"
+          :disabled="busyActive"
+          @click="selectBranch('official')"
+        >
+          Обычная · bol-van ({{ officialList.length }})
+        </button>
+      </div>
+      <button
+        type="button"
+        class="ghost"
+        :disabled="busyActive || zapretReleasesState === 'loading'"
+        :class="{ 'is-busy': zapretReleasesState === 'loading' }"
+        @click="loadZapretReleases(true)"
+      >
+        <Icon name="refresh" class="icon-sm" />
+        <span>{{ zapretReleasesState === 'loading' ? 'Обновление...' : 'Проверить релизы' }}</span>
       </button>
     </div>
 
-    <p v-if="zapretReleasesError" class="error-text" style="margin-top:0.6rem">{{ zapretReleasesError }}</p>
-    <p v-if="branchError" class="error-text" style="margin-top:0.4rem">{{ branchError }}</p>
+    <p v-if="zapretReleasesError" class="error-text">{{ zapretReleasesError }}</p>
+    <p v-if="branchError" class="error-text">{{ branchError }}</p>
 
-    <div class="domain-list" style="margin-top:0.8rem">
-      <div v-for="rel in activeList" :key="`${rel.source}-${rel.version}`" class="domain-item">
-        <div>
+    <div class="list-stack zapret-releases-list">
+      <div v-for="rel in activeList" :key="`${rel.source}-${rel.version}`" class="list-row zapret-release-row">
+        <div class="zapret-release-meta">
           <code>{{ rel.tag }}</code>
-          <span v-if="shortDate(rel.published_at)" style="color:var(--muted);font-size:0.8rem"> · {{ shortDate(rel.published_at) }}</span>
-          <span v-if="rel.prerelease" class="chip" style="margin-left:0.4rem">pre-release</span>
-          <span v-if="isCurrent(rel.source, rel.version)" class="chip on" style="margin-left:0.4rem">установлена</span>
-          <a v-if="rel.url" :href="rel.url" target="_blank" rel="noopener noreferrer"
-            style="margin-left:0.5rem;font-size:0.78rem;color:var(--accent)">GitHub ↗</a>
+          <span v-if="shortDate(rel.published_at)" class="zapret-release-date">{{ shortDate(rel.published_at) }}</span>
+          <span v-if="rel.prerelease" class="chip is-warn">pre-release</span>
+          <span v-if="isCurrent(rel.source, rel.version)" class="chip on">установлена</span>
+          <a
+            v-if="rel.url"
+            :href="rel.url"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="zapret-ext-link"
+          >
+            <span>GitHub</span>
+            <Icon name="external" class="icon-sm" />
+          </a>
         </div>
-        <button type="button"
+        <button
+          type="button"
+          class="compact-btn"
           :class="[rowAction(rel.source, rel.version) === 'Обновить' || rowAction(rel.source, rel.version) === 'Переключить' ? 'primary' : 'ghost', { 'is-busy': busyButton === 'zapret-version' }]"
           :disabled="busyActive"
-          @click="installZapretRelease(rel.source, rel.version)">
+          @click="installZapretRelease(rel.source, rel.version)"
+        >
           {{ rowAction(rel.source, rel.version) }}
         </button>
       </div>
-      <p v-if="zapretReleasesState === 'loading' && !activeList.length" class="panel-d">Загружаем доступные релизы…</p>
+      <p v-if="zapretReleasesState === 'loading' && !activeList.length" class="panel-d">Загружаем доступные релизы...</p>
       <p v-else-if="!activeList.length && !branchError && !zapretReleasesError" class="panel-d">
         Релизы не загружены. Нажмите «Проверить релизы».
       </p>
     </div>
   </div>
 </template>
+
+<style scoped>
+.zapret-compact {
+  display: grid;
+  gap: 0.55rem;
+  margin: 0.75rem 0;
+  padding: 0.75rem 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.zapret-compact-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.zapret-hint {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--accent);
+}
+.zapret-compact-controls {
+  display: flex;
+  gap: 0.45rem;
+  align-items: center;
+}
+.zapret-compact-controls select {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.78rem;
+}
+.zapret-inline-badge { margin-left: 0.45rem; }
+.zapret-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  margin-bottom: 0.8rem;
+}
+.zapret-releases-list {
+  max-height: 360px;
+  overflow-y: auto;
+}
+.zapret-release-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 0.75rem;
+}
+.zapret-release-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+}
+.zapret-release-date {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-family: var(--font-mono);
+}
+.zapret-ext-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  color: var(--accent);
+  font-size: 0.78rem;
+  font-weight: 500;
+}
+.zapret-ext-link:hover { text-decoration: underline; }
+</style>

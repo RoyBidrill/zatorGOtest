@@ -7,6 +7,7 @@ import { refreshTlsBlobSettings, tlsBlobSettings } from '../../stores/settings'
 import { refreshSniState, sniProfiles, sniSets, sniUnavailable } from '../../stores/sni'
 import { refreshAll } from '../../stores/status'
 import { announceRestart, restartSuffix, showToast } from '../../stores/toast'
+import Icon from '../ui/Icon.vue'
 
 type SniSource = 'set' | 'pin' | 'custom' | 'default'
 
@@ -142,11 +143,11 @@ const rows = computed(() => TLS_IDS.map((id) => {
     ? 'blob'
     : (p?.pin ? 'clone-solo' : (p?.set || eff.length > 0 ? 'clone-pool' : 'clone-solo'))
 
-  let sniLabel = '—'
+  let sniLabel = '-'
   if (sniUnavailable.value) sniLabel = 'SNI недоступен'
   else if (p?.pin) sniLabel = `пин: ${p.pin}`
-  else if (p?.set) sniLabel = `@${p.set} · ${p.policy === 'rand' ? 'rand' : 'rr'}`
-  else if (eff.length > 0) sniLabel = `свой (${eff.length}) · ${p?.policy === 'rand' ? 'rand' : 'rr'}`
+  else if (p?.set) sniLabel = `@${p.set} (${p.policy === 'rand' ? 'rand' : 'rr'})`
+  else if (eff.length > 0) sniLabel = `свой (${eff.length}, ${p?.policy === 'rand' ? 'rand' : 'rr'})`
   else if (mode === 'clone') sniLabel = 'www.google.com (дефолт)'
 
   const size = tls.value?.profile_sizes?.[id]
@@ -222,7 +223,7 @@ async function saveGlobalCloneSize() {
   if (raw !== '') {
     const n = Number(raw)
     if (!Number.isInteger(n) || n < 64 || n > 1200) {
-      showToast('Лимит клона должен быть 64–1200 байт или пусто', 'error')
+      showToast('Лимит клона должен быть 64-1200 байт или пусто', 'error')
       return
     }
   }
@@ -261,7 +262,7 @@ async function saveTlsProfile(id: string) {
   if (sizeVal !== origSizeVal && sizeVal !== '') {
     const n = Number(sizeVal)
     if (!Number.isInteger(n) || n < 64 || n > 1200) {
-      showToast('Лимит клона должен быть целым числом 64–1200 Б', 'error')
+      showToast('Лимит клона должен быть целым числом 64-1200 Б', 'error')
       return
     }
   }
@@ -349,37 +350,70 @@ async function saveTlsProfile(id: string) {
             </optgroup>
           </select>
         </label>
-        <button id="tls-global-save" type="button" class="primary"
-          :disabled="busyActive || !globalDirty" :class="{ 'is-busy': busyButton === 'tls-global' }"
-          @click="saveGlobalTls">Сохранить</button>
+        <button
+          id="tls-global-save"
+          type="button"
+          class="primary"
+          :disabled="busyActive || !globalDirty"
+          :class="{ 'is-busy': busyButton === 'tls-global' }"
+          @click="saveGlobalTls"
+        >
+          Сохранить
+        </button>
       </div>
 
       <div class="default-item">
         <label class="field">
           <span>Глобальный лимит клона (Б)</span>
-          <input id="clone-size-global-input" v-model="globalSizeDraft" type="number" min="64" max="1200"
-            placeholder="1200" :disabled="busyActive">
+          <input
+            id="clone-size-global-input"
+            v-model="globalSizeDraft"
+            type="number"
+            min="64"
+            max="1200"
+            placeholder="1200"
+            :disabled="busyActive"
+          >
         </label>
-        <button type="button" :disabled="busyActive || !globalSizeDirty"
+        <button
+          type="button"
+          :disabled="busyActive || !globalSizeDirty"
           :class="{ 'is-busy': busyButton === 'clone-size-global' }"
-          @click="saveGlobalCloneSize">Сохранить</button>
+          @click="saveGlobalCloneSize"
+        >
+          Сохранить
+        </button>
       </div>
     </section>
 
-    <section class="panel matrix-panel" aria-label="Матрица профилей">
+    <section class="panel" aria-label="Матрица профилей">
       <div class="panel-h">
-        <h2>Профили</h2>
-        <span class="panel-hint">Нажмите на профиль, чтобы изменить режим, блоб или SNI</span>
+        <div>
+          <h2>Профили</h2>
+          <p class="panel-hint">Нажмите на профиль, чтобы изменить режим, блоб или SNI</p>
+        </div>
       </div>
 
-      <div class="matrix-list">
-        <div v-for="row in rows" :id="`profile-row-${row.id}`" :key="row.id"
-          class="matrix-item" :class="{ 'is-open': expandedId === row.id }">
-          <button type="button" class="matrix-summary" :aria-expanded="expandedId === row.id"
-            @click="toggleRow(row.id)">
+      <div class="list-stack">
+        <div
+          v-for="row in rows"
+          :id="`profile-row-${row.id}`"
+          :key="row.id"
+          class="matrix-item"
+          :class="{ 'is-open': expandedId === row.id }"
+        >
+          <button
+            type="button"
+            class="matrix-summary"
+            :aria-expanded="expandedId === row.id"
+            @click="toggleRow(row.id)"
+          >
             <span class="prof-id">{{ row.id }}</span>
             <strong class="prof-title">{{ row.title }}</strong>
-            <span class="chip mode-pill" :class="{ on: row.mode === 'clone' }">[{{ row.tag }}]</span>
+            <span class="matrix-badges">
+              <span class="chip mode-pill" :class="row.mode === 'clone' ? 'on' : ''">{{ row.tag }}</span>
+              <span v-if="row.sizeLabel" class="chip size-pill">{{ row.sizeLabel }}</span>
+            </span>
             <span class="meta-col">
               <span class="meta-k">блоб:</span>
               <code :class="{ accent: row.blobLabel !== 'глобальный' }">{{ row.blobLabel }}</code>
@@ -388,18 +422,32 @@ async function saveTlsProfile(id: string) {
               <span class="meta-k">SNI:</span>
               <span>{{ row.sniLabel }}</span>
             </span>
-            <span v-if="row.sizeLabel" class="chip size-pill">{{ row.sizeLabel }}</span>
-            <span class="row-caret">{{ expandedId === row.id ? 'Свернуть ▴' : 'Настроить ▾' }}</span>
+            <span class="row-caret">
+              <span>{{ expandedId === row.id ? 'Свернуть' : 'Настроить' }}</span>
+              <Icon name="chevron-down" class="icon-sm row-caret-icon" :class="{ 'is-open': expandedId === row.id }" />
+            </span>
           </button>
 
           <div v-if="expandedId === row.id && drafts[row.id]" class="matrix-editor">
             <div class="editor-block">
               <span class="field-caption">Режим фейков</span>
               <div class="seg-group" role="radiogroup" aria-label="Режим фейков">
-                <button type="button" :class="{ active: drafts[row.id].mode === 'classic' }" :disabled="busyActive"
-                  @click="drafts[row.id].mode = 'classic'">Классика (blob)</button>
-                <button type="button" :class="{ active: drafts[row.id].mode === 'clone' }" :disabled="busyActive"
-                  @click="drafts[row.id].mode = 'clone'">Клон (ClientHello + SNI)</button>
+                <button
+                  type="button"
+                  :class="{ active: drafts[row.id].mode === 'classic' }"
+                  :disabled="busyActive"
+                  @click="drafts[row.id].mode = 'classic'"
+                >
+                  Классика (blob)
+                </button>
+                <button
+                  type="button"
+                  :class="{ active: drafts[row.id].mode === 'clone' }"
+                  :disabled="busyActive"
+                  @click="drafts[row.id].mode = 'clone'"
+                >
+                  Клон (ClientHello + SNI)
+                </button>
               </div>
             </div>
 
@@ -415,25 +463,66 @@ async function saveTlsProfile(id: string) {
 
               <details v-if="!sniUnavailable" class="extra-fold">
                 <summary>SNI и размер клона (для встроенных клон-стратегий конфига)</summary>
-                <div class="fold-body">
+                <div class="fold-body editor-block">
                   <div class="seg-group seg-sm" role="radiogroup" aria-label="Источник SNI">
-                    <button type="button" :class="{ active: drafts[row.id].sniSource === 'set' }"
-                      @click="drafts[row.id].sniSource = 'set'">Набор</button>
-                    <button type="button" :class="{ active: drafts[row.id].sniSource === 'pin' }"
-                      @click="drafts[row.id].sniSource = 'pin'">Один SNI</button>
-                    <button type="button" :class="{ active: drafts[row.id].sniSource === 'custom' }"
-                      @click="drafts[row.id].sniSource = 'custom'">Свой список</button>
-                    <button type="button" :class="{ active: drafts[row.id].sniSource === 'default' }"
-                      @click="drafts[row.id].sniSource = 'default'">По умолчанию</button>
+                    <button type="button" :class="{ active: drafts[row.id].sniSource === 'set' }" @click="drafts[row.id].sniSource = 'set'">
+                      Набор (пул)
+                    </button>
+                    <button type="button" :class="{ active: drafts[row.id].sniSource === 'pin' }" @click="drafts[row.id].sniSource = 'pin'">
+                      Один SNI
+                    </button>
+                    <button type="button" :class="{ active: drafts[row.id].sniSource === 'custom' }" @click="drafts[row.id].sniSource = 'custom'">
+                      Свой список
+                    </button>
+                    <button type="button" :class="{ active: drafts[row.id].sniSource === 'default' }" @click="drafts[row.id].sniSource = 'default'">
+                      По умолчанию
+                    </button>
                   </div>
-                  <div v-if="drafts[row.id].sniSource === 'set'" class="grid-2">
+
+                  <div v-if="drafts[row.id].sniSource === 'set'" class="sni-source-body">
+                    <div class="grid-2">
+                      <label class="field">
+                        <span>Набор SNI</span>
+                        <select :id="`sni-set-select-${row.id}`" v-model="drafts[row.id].set" :disabled="busyActive">
+                          <option v-for="s in sets" :key="s.name" :value="s.name">
+                            {{ s.name }} ({{ s.domains.length }} им., {{ s.origin === 'user' ? 'ваш' : 'zator' }})
+                          </option>
+                        </select>
+                      </label>
+                      <label class="field">
+                        <span>Чередование</span>
+                        <select :id="`sni-policy-${row.id}`" v-model="drafts[row.id].policy" :disabled="busyActive">
+                          <option value="rr">По кругу (rr)</option>
+                          <option value="rand">Случайно без повторов (rand)</option>
+                        </select>
+                      </label>
+                    </div>
+                    <div v-if="selectedSetDomains(drafts[row.id].set).length" class="preview-chips">
+                      <span v-for="d in selectedSetDomains(drafts[row.id].set).slice(0, 8)" :key="d" class="chip">{{ d }}</span>
+                      <span v-if="selectedSetDomains(drafts[row.id].set).length > 8" class="chip">
+                        +{{ selectedSetDomains(drafts[row.id].set).length - 8 }}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div v-else-if="drafts[row.id].sniSource === 'pin'" class="grid-2 sni-source-body">
                     <label class="field">
-                      <span>Набор SNI</span>
-                      <select v-model="drafts[row.id].set" :disabled="busyActive">
-                        <option v-for="s in sets" :key="s.name" :value="s.name">
-                          {{ s.name }} ({{ s.domains.length }} им., {{ s.origin === 'user' ? 'ваш' : 'zator' }})
-                        </option>
+                      <span>Закреплённый SNI</span>
+                      <select :id="`sni-pin-${row.id}`" v-model="drafts[row.id].pinPick" :disabled="busyActive">
+                        <option v-for="preset in PIN_PRESETS" :key="preset" :value="preset">{{ preset }}</option>
+                        <option :value="PIN_CUSTOM">Свой домен...</option>
                       </select>
+                    </label>
+                    <label v-if="drafts[row.id].pinPick === PIN_CUSTOM" class="field">
+                      <span>Домен</span>
+                      <input v-model.trim="drafts[row.id].pinCustom" type="text" placeholder="example.com" :disabled="busyActive">
+                    </label>
+                  </div>
+
+                  <div v-else-if="drafts[row.id].sniSource === 'custom'" class="grid-2 sni-source-body">
+                    <label class="field">
+                      <span>Домены (до 32, по одному в строке)</span>
+                      <textarea :id="`sni-custom-${row.id}`" v-model="drafts[row.id].customList" rows="3" :disabled="busyActive" />
                     </label>
                     <label class="field">
                       <span>Чередование</span>
@@ -443,32 +532,10 @@ async function saveTlsProfile(id: string) {
                       </select>
                     </label>
                   </div>
-                  <div v-else-if="drafts[row.id].sniSource === 'pin'" class="grid-2">
-                    <label class="field">
-                      <span>SNI-пин</span>
-                      <select v-model="drafts[row.id].pinPick" :disabled="busyActive">
-                        <option v-for="preset in PIN_PRESETS" :key="preset" :value="preset">{{ preset }}</option>
-                        <option :value="PIN_CUSTOM">Свой домен…</option>
-                      </select>
-                    </label>
-                    <label v-if="drafts[row.id].pinPick === PIN_CUSTOM" class="field">
-                      <span>Домен</span>
-                      <input v-model.trim="drafts[row.id].pinCustom" type="text" placeholder="example.com" :disabled="busyActive">
-                    </label>
-                  </div>
-                  <div v-else-if="drafts[row.id].sniSource === 'custom'" class="grid-2">
-                    <label class="field">
-                      <span>Домены (до 32, по одному в строке)</span>
-                      <textarea v-model="drafts[row.id].customList" rows="3" :disabled="busyActive"></textarea>
-                    </label>
-                    <label class="field">
-                      <span>Чередование</span>
-                      <select v-model="drafts[row.id].policy" :disabled="busyActive">
-                        <option value="rr">По кругу (rr)</option>
-                        <option value="rand">Случайно (rand)</option>
-                      </select>
-                    </label>
-                  </div>
+
+                  <p v-else class="panel-d sni-default-note">
+                    Используется невинный SNI по умолчанию (<code>www.google.com</code>).
+                  </p>
                 </div>
               </details>
             </template>
@@ -477,14 +544,18 @@ async function saveTlsProfile(id: string) {
               <div v-if="!sniUnavailable" class="editor-block">
                 <span class="field-caption">Источник SNI для клона</span>
                 <div class="seg-group seg-sm" role="radiogroup" aria-label="Источник SNI">
-                  <button type="button" :class="{ active: drafts[row.id].sniSource === 'set' }"
-                    @click="drafts[row.id].sniSource = 'set'">Набор (пул)</button>
-                  <button type="button" :class="{ active: drafts[row.id].sniSource === 'pin' }"
-                    @click="drafts[row.id].sniSource = 'pin'">Один SNI</button>
-                  <button type="button" :class="{ active: drafts[row.id].sniSource === 'custom' }"
-                    @click="drafts[row.id].sniSource = 'custom'">Свой список</button>
-                  <button type="button" :class="{ active: drafts[row.id].sniSource === 'default' }"
-                    @click="drafts[row.id].sniSource = 'default'">По умолчанию</button>
+                  <button type="button" :class="{ active: drafts[row.id].sniSource === 'set' }" @click="drafts[row.id].sniSource = 'set'">
+                    Набор (пул)
+                  </button>
+                  <button type="button" :class="{ active: drafts[row.id].sniSource === 'pin' }" @click="drafts[row.id].sniSource = 'pin'">
+                    Один SNI
+                  </button>
+                  <button type="button" :class="{ active: drafts[row.id].sniSource === 'custom' }" @click="drafts[row.id].sniSource = 'custom'">
+                    Свой список
+                  </button>
+                  <button type="button" :class="{ active: drafts[row.id].sniSource === 'default' }" @click="drafts[row.id].sniSource = 'default'">
+                    По умолчанию
+                  </button>
                 </div>
 
                 <div v-if="drafts[row.id].sniSource === 'set'" class="sni-source-body">
@@ -518,7 +589,7 @@ async function saveTlsProfile(id: string) {
                     <span>Закреплённый SNI</span>
                     <select :id="`sni-pin-${row.id}`" v-model="drafts[row.id].pinPick" :disabled="busyActive">
                       <option v-for="preset in PIN_PRESETS" :key="preset" :value="preset">{{ preset }}</option>
-                      <option :value="PIN_CUSTOM">Свой домен…</option>
+                      <option :value="PIN_CUSTOM">Свой домен...</option>
                     </select>
                   </label>
                   <label v-if="drafts[row.id].pinPick === PIN_CUSTOM" class="field">
@@ -530,7 +601,7 @@ async function saveTlsProfile(id: string) {
                 <div v-else-if="drafts[row.id].sniSource === 'custom'" class="grid-2 sni-source-body">
                   <label class="field">
                     <span>Домены (до 32, по одному в строке)</span>
-                    <textarea :id="`sni-custom-${row.id}`" v-model="drafts[row.id].customList" rows="3" :disabled="busyActive"></textarea>
+                    <textarea :id="`sni-custom-${row.id}`" v-model="drafts[row.id].customList" rows="3" :disabled="busyActive" />
                   </label>
                   <label class="field">
                     <span>Чередование</span>
@@ -541,7 +612,7 @@ async function saveTlsProfile(id: string) {
                   </label>
                 </div>
 
-                <p v-else class="panel-d" style="margin:0.45rem 0 0">
+                <p v-else class="panel-d sni-default-note">
                   Используется невинный SNI по умолчанию (<code>www.google.com</code>).
                 </p>
               </div>
@@ -555,10 +626,17 @@ async function saveTlsProfile(id: string) {
                       <select :id="`clone-size-${row.id}`" v-model="drafts[row.id].sizePreset" :disabled="busyActive">
                         <option value="">По глобальному ({{ savedGlobalCloneSize || '1200' }} Б)</option>
                         <option v-for="preset in CLONE_SIZE_PRESETS" :key="preset" :value="preset">{{ preset }} Б</option>
-                        <option value="custom">Свой (64–1200 Б)</option>
+                        <option value="custom">Свой (64-1200 Б)</option>
                       </select>
-                      <input v-if="drafts[row.id].sizePreset === 'custom'" v-model="drafts[row.id].sizeCustom"
-                        type="number" min="64" max="1200" :disabled="busyActive" placeholder="768">
+                      <input
+                        v-if="drafts[row.id].sizePreset === 'custom'"
+                        v-model="drafts[row.id].sizeCustom"
+                        type="number"
+                        min="64"
+                        max="1200"
+                        :disabled="busyActive"
+                        placeholder="768"
+                      >
                     </div>
                   </label>
                   <label class="field">
@@ -574,32 +652,47 @@ async function saveTlsProfile(id: string) {
             </template>
 
             <div class="actions editor-actions">
-              <button type="button" class="primary"
+              <button
+                type="button"
+                class="primary"
                 :disabled="busyActive || !isProfileDirty(row.id)"
                 :class="{ 'is-busy': busyButton === `prof-save-${row.id}` }"
-                @click="saveTlsProfile(row.id)">Сохранить профиль</button>
-              <button type="button" class="ghost" :disabled="busyActive || !isProfileDirty(row.id)"
-                @click="resetRow(row.id)">Сбросить</button>
+                @click="saveTlsProfile(row.id)"
+              >
+                Сохранить профиль
+              </button>
+              <button type="button" class="ghost" :disabled="busyActive || !isProfileDirty(row.id)" @click="resetRow(row.id)">
+                Сбросить
+              </button>
               <button type="button" class="ghost" @click="expandedId = null">Свернуть</button>
             </div>
           </div>
         </div>
 
         <div id="profile-row-5" class="matrix-item" :class="{ 'is-open': expandedId === '5' }">
-          <button type="button" class="matrix-summary" :aria-expanded="expandedId === '5'"
-            @click="toggleRow('5')">
+          <button
+            type="button"
+            class="matrix-summary"
+            :aria-expanded="expandedId === '5'"
+            @click="toggleRow('5')"
+          >
             <span class="prof-id">5</span>
             <strong class="prof-title">YouTube QUIC (UDP 443)</strong>
-            <span class="chip mode-pill">[quic]</span>
+            <span class="matrix-badges">
+              <span class="chip mode-pill">quic</span>
+            </span>
             <span class="meta-col">
               <span class="meta-k">блоб:</span>
               <code :class="{ accent: !!savedQuicBlob }">{{ savedQuicBlob || 'как в конфиге' }}</code>
             </span>
             <span class="meta-col sni-col">
               <span class="meta-k">SNI:</span>
-              <span>—</span>
+              <span>-</span>
             </span>
-            <span class="row-caret">{{ expandedId === '5' ? 'Свернуть ▴' : 'Настроить ▾' }}</span>
+            <span class="row-caret">
+              <span>{{ expandedId === '5' ? 'Свернуть' : 'Настроить' }}</span>
+              <Icon name="chevron-down" class="icon-sm row-caret-icon" :class="{ 'is-open': expandedId === '5' }" />
+            </span>
           </button>
 
           <div v-if="expandedId === '5'" class="matrix-editor">
@@ -611,12 +704,17 @@ async function saveTlsProfile(id: string) {
               </select>
             </label>
             <div class="actions editor-actions">
-              <button id="tls-blob-quic-5-save" type="button" class="primary"
+              <button
+                id="tls-blob-quic-5-save"
+                type="button"
+                class="primary"
                 :disabled="busyActive || !quicDirty"
                 :class="{ 'is-busy': busyButton === 'prof-save-5' }"
-                @click="saveQuicProfile">Сохранить профиль</button>
-              <button type="button" class="ghost" :disabled="busyActive || !quicDirty"
-                @click="resetRow('5')">Сбросить</button>
+                @click="saveQuicProfile"
+              >
+                Сохранить профиль
+              </button>
+              <button type="button" class="ghost" :disabled="busyActive || !quicDirty" @click="resetRow('5')">Сбросить</button>
               <button type="button" class="ghost" @click="expandedId = null">Свернуть</button>
             </div>
           </div>
@@ -640,45 +738,47 @@ async function saveTlsProfile(id: string) {
   gap: 0.5rem;
   align-items: end;
 }
-.panel-hint { color: var(--muted); font-size: 0.78rem; }
-.matrix-list { display: grid; gap: 0.45rem; }
 .matrix-item {
   border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--bg1) 45%, transparent);
-  transition: border-color 150ms var(--ease);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  transition: border-color 150ms var(--ease), background-color 150ms var(--ease);
 }
 .matrix-item.is-open {
-  border-color: color-mix(in srgb, var(--accent) 50%, var(--line));
-  background: var(--surface-2);
+  border-color: color-mix(in srgb, var(--accent) 46%, var(--line));
+  background: var(--surface);
 }
 .matrix-summary {
   width: 100%;
   display: grid;
-  grid-template-columns: 2rem minmax(8.5rem, 11rem) auto minmax(9rem, 1fr) minmax(8rem, 1fr) auto auto;
+  grid-template-columns: 1.85rem minmax(8.5rem, 10.5rem) minmax(5.8rem, auto) minmax(8rem, 1fr) minmax(8rem, 1fr) auto;
   align-items: center;
-  gap: 0.55rem;
-  padding: 0.65rem 0.8rem;
+  gap: 0.65rem;
+  padding: 0.68rem 0.85rem;
   border: 0;
   background: transparent;
   text-align: left;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
+  font-weight: 400;
 }
-.matrix-summary:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); }
-.prof-id {
-  display: inline-grid;
-  place-items: center;
-  width: 1.7rem;
-  height: 1.7rem;
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-  color: var(--accent);
-  font-family: var(--font-mono);
-  font-weight: 700;
-  font-size: 0.8rem;
+.matrix-summary:hover:not(:disabled) {
+  background: var(--surface-hover);
+  border-color: transparent;
 }
-.prof-title { font-size: 0.88rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.mode-pill, .size-pill { font-size: 0.72rem; }
+.prof-title {
+  font-size: 0.88rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.matrix-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+.mode-pill,
+.size-pill { font-size: 0.72rem; }
 .meta-col {
   min-width: 0;
   font-size: 0.8rem;
@@ -687,58 +787,54 @@ async function saveTlsProfile(id: string) {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.meta-k { margin-right: 0.25rem; opacity: 0.8; }
-.meta-col code { font-family: var(--font-mono); color: var(--ink); font-size: 0.78rem; }
+.meta-k { margin-right: 0.25rem; opacity: 0.85; }
+.meta-col code {
+  background: transparent;
+  padding: 0;
+  color: var(--ink);
+  font-size: 0.78rem;
+}
 .meta-col code.accent { color: var(--accent); font-weight: 600; }
-.row-caret { color: var(--muted); font-size: 0.76rem; white-space: nowrap; justify-self: end; }
+.row-caret {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+  white-space: nowrap;
+  justify-self: end;
+}
+.row-caret-icon {
+  transition: transform 180ms var(--ease);
+}
+.row-caret-icon.is-open {
+  transform: rotate(180deg);
+}
 
 .matrix-editor {
   display: grid;
   gap: 0.85rem;
-  padding: 0.85rem 0.9rem 0.95rem;
+  padding: 0.9rem 0.95rem 1rem;
   border-top: 1px solid var(--line);
 }
-.editor-block { display: grid; gap: 0.4rem; }
-.field-caption { color: var(--muted); font-size: 0.76rem; }
-.seg-group {
-  display: inline-flex;
-  flex-wrap: wrap;
-  gap: 0.25rem;
-  width: fit-content;
-  padding: 0.2rem;
-  border: 1px solid var(--line);
-  border-radius: 9px;
-  background: color-mix(in srgb, var(--bg1) 70%, transparent);
-}
-.seg-group button {
-  border: 0;
-  background: transparent;
-  padding: 0.4rem 0.75rem;
-  font-size: 0.82rem;
-  border-radius: 7px;
-  color: var(--muted);
-}
-.seg-group.seg-sm button { padding: 0.32rem 0.65rem; font-size: 0.78rem; }
-.seg-group button.active {
-  background: var(--accent);
-  color: var(--accent-ink);
-  font-weight: 600;
-}
-.sni-source-body { margin-top: 0.35rem; }
-.preview-chips { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.45rem; }
+.editor-block { display: grid; gap: 0.45rem; }
+.sni-source-body { margin-top: 0.2rem; }
+.sni-default-note { margin: 0.35rem 0 0; }
+.preview-chips { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.5rem; }
 .extra-fold summary { cursor: pointer; color: var(--muted); font-size: 0.8rem; }
 .fold-body { margin-top: 0.55rem; }
 .size-pair { display: flex; gap: 0.45rem; }
 .size-pair > input { max-width: 6.5rem; }
-.editor-actions { padding-top: 0.2rem; }
+.editor-actions { padding-top: 0.25rem; }
 
 @media (max-width: 960px) {
   .defaults-bar { grid-template-columns: 1fr; }
   .matrix-summary {
-    grid-template-columns: 2rem minmax(0, 1fr) auto;
+    grid-template-columns: 1.85rem minmax(0, 1fr) auto;
     grid-auto-rows: auto;
   }
-  .meta-col, .size-pill { grid-column: 2 / -1; }
+  .matrix-badges,
+  .meta-col { grid-column: 2 / -1; }
   .row-caret { grid-column: 3; grid-row: 1; }
 }
 </style>

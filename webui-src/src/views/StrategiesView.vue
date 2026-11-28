@@ -11,6 +11,7 @@ import { fetchAndApplyState } from '../stores/state'
 import { locks, refreshAll, scope, scopes, status, statusLoaded, strategyChecks } from '../stores/status'
 import { showToast } from '../stores/toast'
 import CheckResults from '../components/ui/CheckResults.vue'
+import Icon from '../components/ui/Icon.vue'
 
 type FilterMode = 'all' | 'active' | 'locked'
 type DraftMap = Record<string, string | number>
@@ -165,7 +166,7 @@ async function save(profile: string, p: ProfileInfo) {
   }
   const max = Number(p.max_strategy || 0)
   if (n !== 0 && max > 0 && n > max) {
-    showToast(`Стратегия вне диапазона (1–${max}, или 0)`, 'error')
+    showToast(`Стратегия вне диапазона (1-${max}, или 0)`, 'error')
     return
   }
   if (n === 0) {
@@ -195,7 +196,7 @@ async function save(profile: string, p: ProfileInfo) {
       }
       return { lockRes, checkPayload }
     })
-    const changed = lockRes.changed ? `${lockRes.previous || '?'}→${lockRes.lock}` : `лок ${n}`
+    const changed = lockRes.changed ? `${lockRes.previous || '?'} -> ${lockRes.lock}` : `лок ${n}`
     if (n === 0) {
       showToast(`Профиль ${profile} выключен (${changed})`)
       return
@@ -205,8 +206,8 @@ async function save(profile: string, p: ProfileInfo) {
       return
     }
     const v = checkPayload?.results?.[0]?.verdict
-    if (v === 'ok') showToast(`Профиль ${profile}: ${changed} — цель доступна`)
-    else if (v === 'warn') showToast(`Профиль ${profile}: ${changed} — с предупреждением`, 'warning')
+    if (v === 'ok') showToast(`Профиль ${profile}: ${changed}, цель доступна`)
+    else if (v === 'warn') showToast(`Профиль ${profile}: ${changed}, с предупреждением`, 'warning')
     else if (v === 'fail') showToast(`Профиль ${profile}: ${changed} записан, цель недоступна`, 'warning')
     else if (checkPayload?.message) showToast(`Профиль ${profile}: ${changed}. ${checkPayload.message}`, 'info')
     else showToast(`Профиль ${profile}: ${changed}`)
@@ -243,7 +244,7 @@ async function check(profile: string, p: ProfileInfo) {
       })
       strategyChecks[profile] = payload
       if (payload.applied === false) {
-        showToast(`Лок в store ${payload.lock} ≠ UI ${expect}`, 'error')
+        showToast(`Лок в store ${payload.lock} не совпадает с UI ${expect}`, 'error')
         return
       }
       const v = payload.results?.[0]?.verdict
@@ -295,8 +296,14 @@ async function runH3Curl(action: 'install' | 'update' | 'remove') {
             <option v-for="s in scopeOptions" :key="s" :value="s">{{ s }}</option>
           </select>
         </label>
-        <button type="button" :disabled="busyActive" :class="{ 'is-busy': busyButton === 'refresh-locks' }" @click="refresh">Обновить</button>
-        <router-link class="btn-link" to="/sweep">Подбор →</router-link>
+        <button type="button" :disabled="busyActive" :class="{ 'is-busy': busyButton === 'refresh-locks' }" @click="refresh">
+          <Icon name="refresh" class="icon-sm" />
+          <span>Обновить</span>
+        </button>
+        <router-link class="btn-link" to="/sweep">
+          <span>Подбор</span>
+          <Icon name="arrow-right" class="icon-sm" />
+        </router-link>
       </div>
     </div>
 
@@ -304,37 +311,69 @@ async function runH3Curl(action: 'install' | 'update' | 'remove') {
       <span>{{ scopes.warning }}</span>
     </div>
 
-    <div v-if="autoModeEnabled" class="notice-banner" role="status">
-      <span>Авторотация включена — профили 1–4 подбираются автоматически.</span>
-      <router-link class="btn-link compact-link" to="/settings/modes">Режимы →</router-link>
+    <div v-if="autoModeEnabled" class="notice-banner is-info" role="status">
+      <span>Авторотация включена: профили 1-4 подбираются автоматически.</span>
+      <router-link class="btn-link compact-link" to="/settings/modes">
+        <span>Режимы</span>
+        <Icon name="arrow-right" class="icon-sm" />
+      </router-link>
     </div>
 
     <div class="filter-bar">
       <div class="tabs-bar" role="tablist" aria-label="Фильтр профилей">
-        <button type="button" role="tab" :aria-selected="filterMode === 'all'"
-          class="tab-pill" :class="{ active: filterMode === 'all' }" @click="filterMode = 'all'">
+        <button
+          type="button"
+          role="tab"
+          :aria-selected="filterMode === 'all'"
+          class="tab-pill"
+          :class="{ active: filterMode === 'all' }"
+          @click="filterMode = 'all'"
+        >
           Все <span class="tab-count">{{ locks.length }}</span>
         </button>
-        <button type="button" role="tab" :aria-selected="filterMode === 'active'"
-          class="tab-pill" :class="{ active: filterMode === 'active' }" @click="filterMode = 'active'">
+        <button
+          type="button"
+          role="tab"
+          :aria-selected="filterMode === 'active'"
+          class="tab-pill"
+          :class="{ active: filterMode === 'active' }"
+          @click="filterMode = 'active'"
+        >
           Активные <span class="tab-count">{{ activeCount }}</span>
         </button>
-        <button type="button" role="tab" :aria-selected="filterMode === 'locked'"
-          class="tab-pill" :class="{ active: filterMode === 'locked' }" @click="filterMode = 'locked'">
+        <button
+          type="button"
+          role="tab"
+          :aria-selected="filterMode === 'locked'"
+          class="tab-pill"
+          :class="{ active: filterMode === 'locked' }"
+          @click="filterMode = 'locked'"
+        >
           Зафиксированные <span class="tab-count">{{ lockedCount }}</span>
         </button>
       </div>
-      <router-link class="bar-link" to="/blobs-sni">Блобы и SNI →</router-link>
+      <router-link class="text-button" to="/blobs-sni">
+        <span>Блобы и SNI</span>
+        <Icon name="arrow-right" class="icon-sm" />
+      </router-link>
     </div>
 
-    <div v-if="!statusLoaded" class="loading">Загрузка…</div>
-    <section v-else class="panel matrix-panel" aria-label="Список профилей">
-      <p v-if="!visibleLocks.length" class="panel-d" style="margin:0">
-        Нет профилей, соответствующих выбранному фильтру.
-      </p>
-      <div v-else class="strat-list">
-        <article v-for="p in visibleLocks" :id="`strategy-${p.profile}`" :key="p.profile"
-          class="strat-item" :class="{ 'is-gated': gated(p), 'is-target': focusedId === String(p.profile) }">
+    <div v-if="!statusLoaded" class="skeleton-list" aria-label="Загрузка профилей">
+      <div v-for="i in 5" :key="i" class="skeleton-row" />
+    </div>
+    <section v-else class="panel" aria-label="Список профилей">
+      <div v-if="!visibleLocks.length" class="empty-state">
+        <strong>Нет подходящих профилей</strong>
+        <p>Нет профилей, соответствующих выбранному фильтру.</p>
+      </div>
+      <div v-else class="list-stack">
+        <article
+          v-for="p in visibleLocks"
+          :id="`strategy-${p.profile}`"
+          :key="p.profile"
+          class="list-row strat-item"
+          :class="{ 'is-gated': gated(p), 'is-target': focusedId === String(p.profile) }"
+        >
           <div class="strat-main">
             <span class="prof-id">{{ p.profile }}</span>
             <div class="strat-info">
@@ -343,15 +382,21 @@ async function runH3Curl(action: 'install' | 'update' | 'remove') {
                 <span class="chip" :class="p.current_lock === '0' ? 'is-bad' : isLocked(p) ? 'on' : ''">
                   {{ p.current_lock === '0' ? 'выключен' : isLocked(p) ? `лок #${p.current_lock}` : 'auto' }}
                 </span>
-                <span v-if="modeBadge(p)" class="chip mono" :class="{ on: modeBadge(p)!.isClone }">
-                  [{{ modeBadge(p)!.label }}]
-                </span>
+                <router-link
+                  v-if="modeBadge(p)"
+                  to="/blobs-sni"
+                  class="chip"
+                  :class="modeBadge(p)!.isClone ? 'on' : 'is-info'"
+                  title="Настроить режим фейков в разделе Блобы и SNI"
+                >
+                  {{ modeBadge(p)!.label }}
+                </router-link>
                 <span v-if="p.is_fallback" class="chip">fb {{ p.fallback_enabled ? 'on' : 'off' }}</span>
                 <span v-if="p.is_udp_games" class="chip">games {{ p.udp_games_enabled ? 'on' : 'off' }}</span>
                 <span v-if="p.is_dns_desync" class="chip">dns {{ p.dns_desync_enabled ? 'on' : 'off' }}</span>
               </div>
               <div class="strat-sub">
-                <span>макс. № {{ p.max_strategy ?? '—' }}</span>
+                <span>макс. № {{ p.max_strategy ?? '-' }}</span>
                 <span v-if="p.description"> · {{ p.description }}</span>
                 <span v-if="draftDirty(p)" class="draft-warn"> · черновик {{ draftText(String(p.profile)) }}</span>
               </div>
@@ -361,33 +406,53 @@ async function runH3Curl(action: 'install' | 'update' | 'remove') {
               <template v-if="gated(p)">
                 <span class="gate-hint">{{ isAutoModeGated(p) ? 'авторотация' : 'отключён' }}</span>
                 <router-link v-if="gatedPanel(p)" class="btn-link compact-link" :to="`/settings/${gatedPanel(p)}`">
-                  Настроить →
+                  <span>Настроить</span>
+                  <Icon name="arrow-right" class="icon-sm" />
                 </router-link>
               </template>
               <template v-else>
                 <input
                   class="strat-num-input mono"
-                  type="number" min="0" :max="p.max_strategy || 999"
+                  type="number"
+                  min="0"
+                  :max="p.max_strategy || 999"
                   :value="draft[String(p.profile)] ?? ''"
-                  :disabled="busyActive || autoModeEnabled"
+                  :disabled="busyActive || isAutoModeGated(p)"
                   placeholder="auto"
                   aria-label="Номер стратегии"
                   @input="draft[String(p.profile)] = ($event.target as HTMLInputElement).value"
                   @keydown.enter.prevent="save(String(p.profile), p)"
                 >
-                <button v-if="autoModeEnabled && isAutoModeGated(p)" type="button" class="ghost" disabled>Авто</button>
-                <button v-else type="button"
+                <button v-if="autoModeEnabled && isAutoModeGated(p)" type="button" class="ghost compact-btn" disabled>Авто</button>
+                <button
+                  v-else
+                  type="button"
+                  class="compact-btn"
                   :class="[draftDirty(p) ? 'primary' : '', { 'is-busy': busyButton === `lock-${p.profile}` }]"
                   :disabled="busyActive"
-                  @click="save(String(p.profile), p)">Лок</button>
-                <button v-if="isLocked(p) && !(autoModeEnabled && isAutoModeGated(p))" type="button" class="ghost"
+                  @click="save(String(p.profile), p)"
+                >
+                  Лок
+                </button>
+                <button
+                  v-if="isLocked(p) && !(autoModeEnabled && isAutoModeGated(p))"
+                  type="button"
+                  class="ghost compact-btn"
                   :class="{ 'is-busy': busyButton === `clear-${p.profile}` }"
                   :disabled="busyActive"
-                  @click="clear(String(p.profile))">Сброс</button>
-                <button type="button" class="ghost"
+                  @click="clear(String(p.profile))"
+                >
+                  Сброс
+                </button>
+                <button
+                  type="button"
+                  class="ghost compact-btn"
                   :class="{ 'is-busy': busyButton === `check-${p.profile}` }"
                   :disabled="busyActive"
-                  @click="check(String(p.profile), p)">Check</button>
+                  @click="check(String(p.profile), p)"
+                >
+                  Проверить
+                </button>
               </template>
             </div>
           </div>
@@ -396,20 +461,40 @@ async function runH3Curl(action: 'install' | 'update' | 'remove') {
             <div class="h3-info">
               <span>HTTP/3 (<code>h3-curl</code>):</span>
               <span class="chip" :class="{ on: !!h3Curl?.found }" :title="h3Curl?.path || ''">
-                {{ h3Curl ? (h3Curl.found ? `установлен${h3Curl.arch ? ` · ${h3Curl.arch}` : ''}` : 'не установлен') : 'проверка…' }}
+                {{ h3Curl ? (h3Curl.found ? `установлен${h3Curl.arch ? ` · ${h3Curl.arch}` : ''}` : 'не установлен') : 'проверка...' }}
               </span>
             </div>
             <div class="actions">
-              <button v-if="h3Curl && !h3Curl.found" type="button" class="primary compact-btn"
-                :disabled="busyActive" :class="{ 'is-busy': busyButton === 'h3-install' }"
-                @click="runH3Curl('install')">Установить h3-curl</button>
+              <button
+                v-if="h3Curl && !h3Curl.found"
+                type="button"
+                class="primary compact-btn"
+                :disabled="busyActive"
+                :class="{ 'is-busy': busyButton === 'h3-install' }"
+                @click="runH3Curl('install')"
+              >
+                Установить h3-curl
+              </button>
               <template v-else-if="h3Curl?.found">
-                <button type="button" class="ghost compact-btn" :disabled="busyActive"
+                <button
+                  type="button"
+                  class="ghost compact-btn"
+                  :disabled="busyActive"
                   :class="{ 'is-busy': busyButton === 'h3-update' }"
-                  @click="runH3Curl('update')">Обновить</button>
-                <button v-if="h3Curl.managed" type="button" class="ghost danger compact-btn" :disabled="busyActive"
+                  @click="runH3Curl('update')"
+                >
+                  Обновить
+                </button>
+                <button
+                  v-if="h3Curl.managed"
+                  type="button"
+                  class="ghost danger compact-btn"
+                  :disabled="busyActive"
                   :class="{ 'is-busy': busyButton === 'h3-remove' }"
-                  @click="runH3Curl('remove')">Удалить</button>
+                  @click="runH3Curl('remove')"
+                >
+                  Удалить
+                </button>
               </template>
             </div>
           </div>
@@ -424,8 +509,9 @@ async function runH3Curl(action: 'install' | 'update' | 'remove') {
               empty-message="Нет результатов проверки."
               :empty-hidden="false"
             />
-            <button type="button" class="ghost compact-btn" style="justify-self:end"
-              @click="delete strategyChecks[String(p.profile)]">Скрыть</button>
+            <button type="button" class="ghost compact-btn check-tray-hide" @click="delete strategyChecks[String(p.profile)]">
+              Скрыть
+            </button>
           </div>
         </article>
       </div>
@@ -434,23 +520,6 @@ async function runH3Curl(action: 'install' | 'update' | 'remove') {
 </template>
 
 <style scoped>
-.scope-picker { margin: 0; min-width: 7.5rem; }
-.notice-banner {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.65rem;
-  padding: 0.65rem 0.9rem;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  background: var(--surface-2);
-  font-size: 0.85rem;
-}
-.notice-banner.is-warn {
-  border-color: color-mix(in srgb, var(--warn) 55%, var(--line));
-  color: var(--warn);
-}
 .filter-bar {
   display: flex;
   flex-wrap: wrap;
@@ -458,66 +527,17 @@ async function runH3Curl(action: 'install' | 'update' | 'remove') {
   justify-content: space-between;
   gap: 0.6rem;
 }
-.tabs-bar { display: flex; flex-wrap: wrap; gap: 0.4rem; }
-.tab-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.45rem;
-  padding: 0.45rem 0.85rem;
-  border-radius: 999px;
-  border: 1px solid var(--line);
-  background: var(--surface-2);
-  color: var(--muted);
-  font-size: 0.84rem;
-  font-weight: 500;
-}
-.tab-pill:hover { color: var(--ink); }
-.tab-pill.active {
-  border-color: transparent;
-  background: var(--accent);
-  color: var(--accent-ink);
-  font-weight: 600;
-}
-.tab-count { font-family: var(--font-mono); font-size: 0.74rem; opacity: 0.85; }
-.bar-link { color: var(--accent); font-size: 0.84rem; font-weight: 600; }
-.bar-link:hover { text-decoration: underline; }
-
-.strat-list { display: grid; gap: 0.5rem; }
-.strat-item {
-  display: grid;
-  gap: 0.5rem;
-  padding: 0.7rem 0.85rem;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--bg1) 45%, transparent);
-  transition: border-color 150ms var(--ease);
-}
-.strat-item.is-target { border-color: var(--accent); }
-.strat-item.is-gated { opacity: 0.72; }
 .strat-main {
   display: grid;
-  grid-template-columns: 2rem minmax(0, 1fr) auto;
+  grid-template-columns: 1.85rem minmax(0, 1fr) auto;
   align-items: center;
-  gap: 0.65rem;
-}
-.prof-id {
-  display: inline-grid;
-  place-items: center;
-  width: 1.8rem;
-  height: 1.8rem;
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-  color: var(--accent);
-  font-family: var(--font-mono);
-  font-weight: 700;
-  font-size: 0.82rem;
+  gap: 0.7rem;
 }
 .strat-info { min-width: 0; display: grid; gap: 0.22rem; }
 .strat-title-line { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem 0.45rem; }
 .strat-title-line strong { font-size: 0.92rem; }
 .strat-sub { color: var(--muted); font-size: 0.78rem; }
 .draft-warn { color: var(--warn); font-weight: 600; }
-.chip.is-bad { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, var(--line)); }
 
 .strat-controls {
   display: flex;
@@ -526,9 +546,13 @@ async function runH3Curl(action: 'install' | 'update' | 'remove') {
   gap: 0.35rem;
   justify-content: flex-end;
 }
-.strat-num-input { width: 4.8rem; padding: 0.42rem 0.5rem; text-align: center; }
+.strat-num-input {
+  width: 4.8rem;
+  min-height: 1.9rem;
+  padding: 0.28rem 0.45rem;
+  text-align: center;
+}
 .gate-hint { color: var(--muted); font-size: 0.8rem; }
-.compact-link, .compact-btn { padding: 0.35rem 0.65rem; font-size: 0.8rem; }
 
 .h3-strip {
   display: flex;
@@ -536,21 +560,22 @@ async function runH3Curl(action: 'install' | 'update' | 'remove') {
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
-  padding: 0.45rem 0.6rem;
-  border-top: 1px dashed var(--line);
+  padding-top: 0.55rem;
+  border-top: 1px solid var(--line);
   font-size: 0.8rem;
 }
 .h3-info { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; color: var(--muted); }
 .row-note { margin: 0; color: var(--muted); font-size: 0.78rem; }
 .check-tray {
   display: grid;
-  gap: 0.4rem;
-  padding-top: 0.45rem;
+  gap: 0.45rem;
+  padding-top: 0.55rem;
   border-top: 1px solid var(--line);
 }
+.check-tray-hide { justify-self: end; }
 
 @media (max-width: 820px) {
-  .strat-main { grid-template-columns: 2rem minmax(0, 1fr); }
+  .strat-main { grid-template-columns: 1.85rem minmax(0, 1fr); }
   .strat-controls { grid-column: 1 / -1; justify-content: flex-start; }
 }
 </style>

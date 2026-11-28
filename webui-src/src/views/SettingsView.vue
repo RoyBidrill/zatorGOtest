@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api, formBody } from '../api/client'
 import {
@@ -20,6 +20,7 @@ import { fetchAndApplyState } from '../stores/state'
 import { refreshAll, scopes, status } from '../stores/status'
 import { announceRestart, restartSuffix, showToast } from '../stores/toast'
 import { applyUpdate, refreshUpdateCheck, updateCheckError, updateCheckResult, updateCheckState, updateMode } from '../stores/updates'
+import Icon from '../components/ui/Icon.vue'
 import ZapretVersionManager from '../components/ui/ZapretVersionManager.vue'
 import { loadZapretReleases, zapretReleasesState } from '../stores/zapretReleases'
 
@@ -45,10 +46,10 @@ const sections = [
 ]
 
 const settingGroups = [
-  { id: 'grp-bypass', key: 'bypass', title: 'Обход DPI', desc: 'Режимы стратегий, TLS/WG blob и wssize.', first: 'sec-modes' },
-  { id: 'grp-net', key: 'network', title: 'Сеть', desc: 'Firewall, интерфейсы WAN/LAN, порты NFQUEUE и client scopes.', first: 'sec-firewall' },
-  { id: 'grp-system', key: 'system', title: 'Система', desc: 'Обновления, провайдер, телеметрия и резервные копии.', first: 'sec-updates' },
-  { id: 'grp-svc', key: 'diagnostics', title: 'Диагностика', desc: 'Версия zapret2, сырой конфиг и журнал ошибок.', first: 'sec-zapret' },
+  { id: 'grp-bypass', key: 'bypass', title: 'Обход DPI', first: 'sec-modes' },
+  { id: 'grp-net', key: 'network', title: 'Сеть', first: 'sec-firewall' },
+  { id: 'grp-system', key: 'system', title: 'Система', first: 'sec-updates' },
+  { id: 'grp-svc', key: 'diagnostics', title: 'Диагностика', first: 'sec-zapret' },
 ]
 
 const modes = [
@@ -67,6 +68,9 @@ watch(status, (s) => {
   if (s?.fwtype) fw.value = s.fwtype
   if (s?.flowoffload) offload.value = s.flowoffload
 }, { immediate: true })
+
+const fwDirty = computed(() => Boolean(status.value?.fwtype && fw.value !== status.value.fwtype))
+const offloadDirty = computed(() => Boolean(status.value?.flowoffload && offload.value !== status.value.flowoffload))
 
 const ifaceWan = ref('')
 const ifaceLan = ref('')
@@ -201,7 +205,7 @@ async function saveWg(restart = true) {
   try {
     const repeats = Number(wgRepeats.value)
     if (!Number.isInteger(repeats) || repeats < 2 || repeats > 99) {
-      showToast('Repeats WireGuard: целое число 2–99', 'error')
+      showToast('Repeats WireGuard: целое число 2-99', 'error')
       return
     }
     if (wgOn.value && !String(wgBlob.value || '').trim()) {
@@ -210,7 +214,7 @@ async function saveWg(restart = true) {
     }
     await withBusy('wg', async () => {
       if (restart) announceRestart()
-      // Один рестарт в конце — иначе двойной maybeRestart.
+      // Один рестарт в конце: иначе двойной maybeRestart.
       await applySetting.wg_state(wgOn.value, false)
       if (wgBlob.value) await applySetting.wg_blob(wgBlob.value, false)
       await applySetting.wg_repeats(repeats, restart)
@@ -409,7 +413,7 @@ async function downloadBackup(name: string) {
 async function saveWssize() {
   if (!wssizeRampSettings.value) return
   if (!Number.isInteger(wssizeScale.value) || wssizeScale.value < 0 || wssizeScale.value > 14) {
-    showToast('Scale должен быть 0–14', 'error')
+    showToast('Scale должен быть 0-14', 'error')
     return
   }
   try {
@@ -473,7 +477,7 @@ async function redetectIfaces() {
     await withBusy('ifaces-auto', async () => {
       announceRestart()
       const res = await applySetting.ifaces({ action: 'redetect' })
-      showToast(`Автоопределение: LAN=${res.lan || '—'}, WAN=${res.wan || '—'}.${restartSuffix(res)}`)
+      showToast(`Автоопределение: LAN=${res.lan || '-'}, WAN=${res.wan || '-'}.${restartSuffix(res)}`)
       await refreshIfacesSettings()
       await refreshAll()
     })
@@ -591,6 +595,7 @@ function panelIdFromRoute(): string {
   if (!raw) return 'sec-modes'
   return panelAliases[raw] || (raw.startsWith('sec-') ? raw : `sec-${raw}`)
 }
+
 const activeCategory = computed(() => {
   const id = panelIdFromRoute()
   const section = sections.find((item) => item.id === id)
@@ -598,14 +603,34 @@ const activeCategory = computed(() => {
   return group === 'Обход' ? 'bypass' : group === 'Сеть' ? 'network' : group === 'Сервис' ? 'diagnostics' : 'system'
 })
 
+const targetSectionId = ref('')
+let targetTimer: number | undefined
+
+function scrollTargetPanel() {
+  const explicitPanel = String(route.params.panel || (route.hash || '').replace(/^#/, '') || '').trim()
+  if (!explicitPanel || !settingsLoaded.value) return
+  const id = panelIdFromRoute()
+  void nextTick(() => {
+    const el = document.getElementById(id)
+    if (!el) return
+    el.scrollIntoView({ block: 'start', behavior: 'smooth' })
+    targetSectionId.value = id
+    window.clearTimeout(targetTimer)
+    targetTimer = window.setTimeout(() => { targetSectionId.value = '' }, 4000)
+  })
+}
+
 watch(activeCategory, (cat) => {
   if (cat === 'diagnostics' && zapretReleasesState.value === 'idle') {
     void loadZapretReleases(false)
   }
 }, { immediate: true })
 
-function goSection(id: string, ev?: Event) {
-  ev?.preventDefault()
+watch([() => route.params.panel, () => route.hash, settingsLoaded], () => {
+  scrollTargetPanel()
+}, { immediate: true })
+
+function goSection(id: string) {
   const slug = id.replace(/^sec-/, '')
   void router.push(`/settings/${slug}`)
 }
@@ -616,388 +641,651 @@ onMounted(async () => {
   await loadErrors()
   try { await refreshClientScopes() } catch (e) { showToast((e as Error).message, 'error') }
 })
+
+onBeforeUnmount(() => {
+  window.clearTimeout(targetTimer)
+})
 </script>
 
 <template>
-  <section class="settings-page">
-    <div class="page-head">
+  <section class="page-stack">
+    <header class="page-head">
       <div>
+        <span class="eyebrow">Конфигурация системы</span>
         <h1>Настройки</h1>
-        <p>Система, обход DPI, сеть и диагностика.</p>
+        <p>Режимы обхода DPI, сетевые параметры, обновления и диагностические инструменты.</p>
       </div>
       <div class="actions">
-        <button type="button" :disabled="busyActive" :class="{ 'is-busy': busyButton === 'refresh-settings' }" @click="refresh">Обновить</button>
+        <button type="button" :disabled="busyActive" :class="{ 'is-busy': busyButton === 'refresh-settings' }" @click="refresh">
+          <Icon name="refresh" class="icon-sm" />
+          <span>Обновить</span>
+        </button>
       </div>
+    </header>
+
+    <div class="tabs-bar" role="tablist" aria-label="Категории настроек">
+      <button
+        v-for="group in settingGroups"
+        :key="group.key"
+        type="button"
+        role="tab"
+        :aria-selected="activeCategory === group.key"
+        class="tab-pill"
+        :class="{ active: activeCategory === group.key }"
+        @click="goSection(group.first)"
+      >
+        {{ group.title }}
+      </button>
     </div>
 
-    <div class="settings-layout">
-      <nav class="settings-nav" aria-label="Категории настроек">
-        <a v-for="group in settingGroups" :key="group.key" href="#"
-          :class="{ 'is-active': activeCategory === group.key }"
-          @click="goSection(group.first, $event)">{{ group.title }}</a>
-      </nav>
-      <div class="settings-content">
-      <div v-if="!settingsLoaded" class="loading">Загрузка…</div>
-      <template v-else>
-      <div class="settings-category" v-show="activeCategory === 'system'">
-      <div id="grp-system" class="settings-group">
-        <h2>Система</h2>
-        <p>Обновления, провайдер, телеметрия и резервные копии.</p>
-      </div>
+    <div v-if="!settingsLoaded" class="skeleton-list" aria-label="Загрузка настроек">
+      <div class="skeleton-row is-tall" />
+      <div v-for="i in 3" :key="i" class="skeleton-row" />
+    </div>
 
-      <section id="sec-updates" class="panel">
-        <div class="panel-h"><h2>Обновления</h2></div>
-        <p class="panel-d">Выберите, какие части обновить. Конфигурация включает Lua, стратегии, списки и blob-файлы.</p>
-        <p class="panel-d" role="status">
-          <template v-if="updateCheckState === 'checking'">Проверяем обновления…</template>
-          <template v-else-if="updateCheckState === 'error'">Проверка не удалась: {{ updateCheckError }}</template>
-          <template v-else-if="updateCheckState === 'success'">{{ updateCheckResult?.update_available ? 'Есть обновление' : 'Новых выпусков не найдено' }}<template v-if="updateCheckResult?.release"> · {{ updateCheckResult.release }}</template></template>
-          <template v-else>Версия ещё не проверена</template>
-        </p>
-        <div class="actions">
-          <label class="field"><span>Режим</span><select v-model="updateMode" :disabled="busyActive"><option value="app">Только Zator</option><option value="config">Только конфиги и стратегии</option><option value="full">Всё</option></select></label>
-          <button type="button" :disabled="busyActive || updateCheckState === 'checking'" :class="{ 'is-busy': updateCheckState === 'checking' }" @click="refreshUpdateCheck">Проверить</button>
-          <button type="button" class="primary" :disabled="busyActive" @click="applyUpdate(updateMode)">Обновить</button>
-        </div>
-      </section>
-
-      <section id="sec-provider" class="panel">
-        <div class="panel-h"><h2>Провайдер</h2></div>
-        <p class="panel-d">Нужен для рекомендаций стратегий. Можно задать вручную или определить автоматически.</p>
-        <div class="grid-2">
-          <label class="field"><span>Имя</span><input v-model="providerName" :disabled="busyActive"></label>
-          <label class="field"><span>Город</span><input v-model="providerCity" :disabled="busyActive"></label>
-        </div>
-        <div class="actions" style="margin-top:0.8rem">
-          <button type="button" class="primary" :disabled="busyActive || !providerName.trim()" @click="saveProvider">Сохранить</button>
-          <button type="button" :disabled="busyActive" :class="{ 'is-busy': busyButton === 'provider-redetect' }" @click="redetectProvider">Определить заново</button>
-        </div>
-        <div style="border-top:1px solid var(--line);padding-top:0.9rem;margin-top:0.5rem">
-          <h3>Рекомендации стратегий</h3>
-          <p class="panel-d">В запросе передаётся название провайдера; сервер также видит IP роутера. Подсказки основаны на статистике успешных проверок и кешируются на сутки.</p>
-          <button type="button" :disabled="!providerKnown || !providerDraftSaved || recommendationsBusy || busyActive" @click="loadRecommendations">
-            {{ recommendationsBusy ? 'Загрузка…' : 'Загрузить рекомендации' }}
-          </button>
-          <p v-if="!providerKnown" class="panel-d">Сначала определите или сохраните провайдера.</p>
-          <p v-else-if="!providerDraftSaved" class="panel-d">Сначала сохраните изменённое название провайдера.</p>
-          <template v-if="recommendations">
-            <p class="panel-d">
-              <template v-if="recommendations.status === 'ready'">Статистика собрана с {{ recommendations.samples }} установок.</template>
-              <template v-else-if="recommendations.status === 'insufficient'">Пока мало данных: {{ recommendations.samples }} установок, требуется {{ recommendations.minimum }}.</template>
-              <template v-else-if="recommendations.status === 'stale'">Сервер временно недоступен; показан сохранённый результат.</template>
-              <template v-else-if="recommendations.status === 'unknown_provider'">Провайдер не определён.</template>
-              <template v-else>Рекомендации пока недоступны.</template>
-            </p>
-            <div v-for="[profileId, item] in recommendationProfiles" :key="profileId" class="domain-item">
-              <div>
-                <strong>Профиль {{ profileId }}</strong>
-                <span v-if="item.clone_recommended"> · клоны рекомендуются ({{ item.clone_pct }}% против {{ item.classic_pct }}%)</span>
-                <div v-if="item.top.length" class="panel-d">
-                  Лучшие стратегии: {{ item.top.map((x) => `${x.strategy} (${x.success_pct}%, ${x.mode})`).join(', ') }}
-                </div>
-                <div v-else class="panel-d">Нет достаточной статистики по стратегиям.</div>
-              </div>
-            </div>
-          </template>
-        </div>
-      </section>
-
-      <section id="sec-telemetry" class="panel">
-        <div class="panel-h"><h2>Анонимная статистика</h2></div>
-        <p class="panel-d">При согласии отправляются псевдоним установки, провайдер, номера стратегий, выбранные TLS blob и режим fake, тип устройства и наличие WebUI. Домены и содержимое трафика не отправляются.</p>
-        <p class="panel-d">Отправка выключена, пока вы явно не дадите согласие.</p>
-        <label class="toggle">
-          <input type="checkbox" :checked="!!telemetrySettings?.enabled" :disabled="busyActive"
-            @change="setTelemetryConsent(($event.target as HTMLInputElement).checked)">
-          <span>Разрешить отправку статистики</span>
-          <span class="chip" :class="{ on: telemetrySettings?.enabled }">{{ telemetrySettings?.enabled ? 'вкл' : 'выкл' }}</span>
-        </label>
-        <p class="panel-d" v-if="telemetrySettings?.enabled && !telemetrySettings.configured">
-          Согласие сохранено, но endpoint и token отправки не настроены; статистика не отправляется.
-        </p>
-      </section>
-
-      <section id="sec-backups" class="panel">
-        <div class="panel-h"><h2>Бэкапы</h2></div>
-        <p class="panel-d">Снимок конфига и локов. Можно скачать или восстановить из файла.</p>
-        <div class="actions">
-          <button type="button" class="primary" :disabled="busyActive" :class="{ 'is-busy': busyButton === 'bak-create' }" @click="createBackup">Создать</button>
-          <label class="ghost" style="padding:0.65rem 1rem;border:1px solid var(--line);border-radius:10px;cursor:pointer">
-            Загрузить
-            <input type="file" accept=".tar,.tgz,.gz,application/x-tar" style="display:none" :disabled="busyActive" @change="uploadBackup">
-          </label>
-        </div>
-        <div class="domain-list" style="margin-top:0.8rem">
-          <div v-for="b in (backups?.items || [])" :key="b.name" class="domain-item">
-            <div>
-              <code>{{ b.name }}</code>
-              <div style="color:var(--muted);font-size:0.8rem">{{ b.date }} · {{ b.size ?? 0 }}</div>
-            </div>
-            <div class="row">
-              <button type="button" class="ghost" :disabled="busyActive"
-                :class="{ 'is-busy': busyButton === 'bak-dl' }"
-                @click="downloadBackup(b.name)">Скачать</button>
-              <button type="button" class="primary" :disabled="busyActive"
-                :class="{ 'is-busy': busyButton === 'bak-restore' }"
-                @click="restoreBackup(b.name)">Восстановить</button>
-              <button type="button" class="ghost danger" :disabled="busyActive" @click="deleteBackup(b.name)">Удалить</button>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      </div>
-      <div class="settings-category" v-show="activeCategory === 'bypass'">
-      <div id="grp-bypass" class="settings-group">
-        <h2>Обход DPI</h2>
-        <p>Режимы стратегий, TLS/WG blob и wssize.</p>
-      </div>
-
-      <section id="sec-modes" class="panel">
-        <div class="panel-h"><h2>Режимы обхода</h2></div>
-        <p class="panel-d">Авторотация, hostlist, fallback, DNS, UDP games, RST, reasm.</p>
-        <div class="grid-2">
-          <label v-for="m in modes" :key="m.key" class="toggle">
-            <input type="checkbox" :checked="!!modeOn(m)" :disabled="busyActive"
-              @change="toggleMode(m, ($event.target as HTMLInputElement).checked)">
-            <span>{{ m.title }}</span>
-            <span class="chip" :class="{ on: modeOn(m) }">{{ modeOn(m) ? 'вкл' : 'выкл' }}</span>
-          </label>
-        </div>
-        <p v-if="udpGamesSettings?.ports" class="panel-d" style="margin-top:0.75rem">
-          UDP Games порты: <code>{{ udpGamesSettings.ports }}</code>
-          · стратегия профиля 7 — во вкладке «Стратегии».
-        </p>
-      </section>
-
-      <section id="sec-tls" class="panel">
-        <div class="panel-h">
-          <h2>TLS / QUIC блобы и SNI</h2>
-          <span class="chip">{{ tlsBlobSettings?.current_mode || '—' }}</span>
-        </div>
-        <p class="panel-d">
-          Глобальный TLS blob: <code>{{ tlsBlobSettings?.current_blob || tlsBlobSettings?.current_mode || '—' }}</code>.
-          Управление глобальным и профильными блобами (включая QUIC/5), режимами фейков, SNI-пулом и загрузкой бинарных файлов вынесено в отдельный раздел.
-        </p>
-        <div class="actions">
-          <router-link class="btn-link" to="/blobs-sni">Открыть «Блобы и SNI» →</router-link>
-        </div>
-      </section>
-
-      <section id="sec-wg" class="panel">
-        <div class="panel-h"><h2>WireGuard fakes</h2><span class="chip" :class="{ on: wgOn }">{{ wgOn ? 'вкл' : 'выкл' }}</span></div>
-        <div class="grid-2">
-          <label class="toggle"><input v-model="wgOn" type="checkbox" :disabled="busyActive"><span>Включить WG-стратегию</span></label>
-          <label class="field">
-            <span>Repeats</span>
-            <input v-model.number="wgRepeats" type="number" min="2" max="99" :disabled="busyActive">
-          </label>
-          <label class="field" style="grid-column:1/-1">
-            <span>Blob</span>
-            <select v-model="wgBlob" :disabled="busyActive">
-              <option v-for="b in (wgBlobSettings?.available_blobs || [])" :key="b" :value="b">{{ b }}</option>
-            </select>
-          </label>
-        </div>
-        <div class="actions" style="margin-top:0.8rem">
-          <button type="button" class="primary" :disabled="busyActive" :class="{ 'is-busy': busyButton === 'wg' }" @click="saveWg(true)">Сохранить WG</button>
-        </div>
-      </section>
-
-      <section id="sec-wssize" class="panel">
-        <div class="panel-h">
-          <h2>WSSIZE ramp</h2>
-          <span v-if="wssizeRampSettings" class="chip" :class="{ on: wssizeOn }">{{ wssizeOn ? 'вкл' : 'выкл' }}</span>
-        </div>
-        <p v-if="!wssizeRampSettings" class="panel-d">Настройка недоступна в этой сборке / ещё не загружена.</p>
-        <template v-else>
-          <p class="panel-d">
-            Googlevideo IP: {{ wssizeRampSettings.googlevideo_ips }}<template v-if="(wssizeRampSettings.googlevideo_local_ips ?? 0) > 0"> · локально: {{ wssizeRampSettings.googlevideo_local_ips }}</template><template v-if="(wssizeRampSettings.googlevideo_hosts ?? 0) > 0"> · SNI-хостов: {{ wssizeRampSettings.googlevideo_hosts }}</template> ·
-            локальный DNS-сбор: {{ wssizeRampSettings.googlevideo_local_collection }}<template v-if="wssizeRampSettings.googlevideo_generated"> · от {{ wssizeRampSettings.googlevideo_generated.slice(0, 16).replace('T', ' ') }} UTC</template>
+    <template v-else>
+      <div v-show="activeCategory === 'system'" class="settings-category">
+        <section id="sec-updates" class="panel" :class="{ 'is-target': targetSectionId === 'sec-updates' }">
+          <div class="panel-h"><h2>Обновления</h2></div>
+          <p class="panel-d">Выберите, какие части обновить. Конфигурация включает Lua, стратегии, списки и blob-файлы.</p>
+          <p class="panel-d" role="status">
+            <template v-if="updateCheckState === 'checking'">Проверяем обновления...</template>
+            <template v-else-if="updateCheckState === 'error'">Проверка не удалась: {{ updateCheckError }}</template>
+            <template v-else-if="updateCheckState === 'success'">
+              {{ updateCheckResult?.update_available ? 'Есть обновление' : 'Новых выпусков не найдено' }}
+              <template v-if="updateCheckResult?.release"> · {{ updateCheckResult.release }}</template>
+            </template>
+            <template v-else>Версия ещё не проверена</template>
           </p>
-          <div class="grid-2">
-            <label class="toggle"><input v-model="wssizeOn" type="checkbox" :disabled="busyActive"><span>Включить wssize_ramp</span></label>
+          <div class="updates-bar">
             <label class="field">
               <span>Режим</span>
-              <select v-model="wssizeMode" :disabled="busyActive">
-                <option value="full">full</option>
-                <option value="lite">lite</option>
+              <select v-model="updateMode" :disabled="busyActive">
+                <option value="app">Только Zator</option>
+                <option value="config">Только конфиги и стратегии</option>
+                <option value="full">Всё</option>
+              </select>
+            </label>
+            <button
+              type="button"
+              :disabled="busyActive || updateCheckState === 'checking'"
+              :class="{ 'is-busy': updateCheckState === 'checking' }"
+              @click="refreshUpdateCheck"
+            >
+              Проверить
+            </button>
+            <button type="button" class="primary" :disabled="busyActive" @click="applyUpdate(updateMode)">Обновить</button>
+          </div>
+        </section>
+
+        <section id="sec-provider" class="panel" :class="{ 'is-target': targetSectionId === 'sec-provider' }">
+          <div class="panel-h"><h2>Провайдер</h2></div>
+          <p class="panel-d">Нужен для рекомендаций стратегий. Можно задать вручную или определить автоматически.</p>
+          <div class="grid-2">
+            <label class="field"><span>Имя</span><input v-model="providerName" :disabled="busyActive"></label>
+            <label class="field"><span>Город</span><input v-model="providerCity" :disabled="busyActive"></label>
+          </div>
+          <div class="actions section-actions">
+            <button type="button" class="primary" :disabled="busyActive || !providerName.trim()" @click="saveProvider">Сохранить</button>
+            <button
+              type="button"
+              :disabled="busyActive"
+              :class="{ 'is-busy': busyButton === 'provider-redetect' }"
+              @click="redetectProvider"
+            >
+              Определить заново
+            </button>
+          </div>
+
+          <hr class="panel-divider">
+
+          <div class="subsection">
+            <h3>Рекомендации стратегий</h3>
+            <p class="panel-d">В запросе передаётся название провайдера; сервер также видит IP роутера. Подсказки основаны на статистике успешных проверок и кешируются на сутки.</p>
+            <div>
+              <button
+                type="button"
+                :disabled="!providerKnown || !providerDraftSaved || recommendationsBusy || busyActive"
+                @click="loadRecommendations"
+              >
+                {{ recommendationsBusy ? 'Загрузка...' : 'Загрузить рекомендации' }}
+              </button>
+            </div>
+            <p v-if="!providerKnown" class="panel-d sub-note">Сначала определите или сохраните провайдера.</p>
+            <p v-else-if="!providerDraftSaved" class="panel-d sub-note">Сначала сохраните изменённое название провайдера.</p>
+            <template v-if="recommendations">
+              <p class="panel-d sub-note">
+                <template v-if="recommendations.status === 'ready'">Статистика собрана с {{ recommendations.samples }} установок.</template>
+                <template v-else-if="recommendations.status === 'insufficient'">Пока мало данных: {{ recommendations.samples }} установок, требуется {{ recommendations.minimum }}.</template>
+                <template v-else-if="recommendations.status === 'stale'">Сервер временно недоступен; показан сохранённый результат.</template>
+                <template v-else-if="recommendations.status === 'unknown_provider'">Провайдер не определён.</template>
+                <template v-else>Рекомендации пока недоступны.</template>
+              </p>
+              <div class="list-stack">
+                <div v-for="[profileId, item] in recommendationProfiles" :key="profileId" class="list-row">
+                  <div class="rec-head">
+                    <strong>Профиль {{ profileId }}</strong>
+                    <span v-if="item.clone_recommended" class="chip on">
+                      клоны {{ item.clone_pct }}% против {{ item.classic_pct }}%
+                    </span>
+                  </div>
+                  <p v-if="item.top.length" class="panel-sub">
+                    Лучшие стратегии: {{ item.top.map((x) => `${x.strategy} (${x.success_pct}%, ${x.mode})`).join(', ') }}
+                  </p>
+                  <p v-else class="panel-sub">Нет достаточной статистики по стратегиям.</p>
+                </div>
+              </div>
+            </template>
+          </div>
+        </section>
+
+        <section id="sec-telemetry" class="panel" :class="{ 'is-target': targetSectionId === 'sec-telemetry' }">
+          <div class="panel-h"><h2>Анонимная статистика</h2></div>
+          <p class="panel-d">При согласии отправляются псевдоним установки, провайдер, номера стратегий, выбранные TLS blob и режим fake, тип устройства и наличие WebUI. Домены и содержимое трафика не отправляются.</p>
+          <p class="panel-d">Отправка выключена, пока вы явно не дадите согласие.</p>
+          <label class="toggle-row">
+            <span>Разрешить отправку статистики</span>
+            <input
+              type="checkbox"
+              :checked="!!telemetrySettings?.enabled"
+              :disabled="busyActive"
+              @change="setTelemetryConsent(($event.target as HTMLInputElement).checked)"
+            >
+          </label>
+          <p v-if="telemetrySettings?.enabled && !telemetrySettings.configured" class="panel-d sub-note">
+            Согласие сохранено, но endpoint и token отправки не настроены; статистика не отправляется.
+          </p>
+        </section>
+
+        <section id="sec-backups" class="panel" :class="{ 'is-target': targetSectionId === 'sec-backups' }">
+          <div class="panel-h"><h2>Бэкапы</h2></div>
+          <p class="panel-d">Снимок конфига и локов. Можно скачать или восстановить из файла.</p>
+          <div class="actions">
+            <button
+              type="button"
+              class="primary"
+              :disabled="busyActive"
+              :class="{ 'is-busy': busyButton === 'bak-create' }"
+              @click="createBackup"
+            >
+              <Icon name="plus" class="icon-sm" />
+              <span>Создать бэкап</span>
+            </button>
+            <div class="file-picker">
+              <label class="file-picker-btn" :class="{ 'is-disabled': busyActive }">
+                <Icon name="upload" class="icon-sm" />
+                <span>Загрузить архив</span>
+                <input
+                  type="file"
+                  accept=".tar,.tgz,.gz,application/x-tar"
+                  class="sr-only"
+                  :disabled="busyActive"
+                  @change="uploadBackup"
+                >
+              </label>
+            </div>
+          </div>
+          <div v-if="(backups?.items || []).length" class="list-stack list-top-gap">
+            <div v-for="b in (backups?.items || [])" :key="b.name" class="list-row compact-item">
+              <div class="item-meta">
+                <code>{{ b.name }}</code>
+                <small>{{ b.date }} · {{ b.size ?? 0 }}</small>
+              </div>
+              <div class="actions">
+                <button
+                  type="button"
+                  class="ghost compact-btn"
+                  :disabled="busyActive"
+                  :class="{ 'is-busy': busyButton === 'bak-dl' }"
+                  @click="downloadBackup(b.name)"
+                >
+                  <Icon name="download" class="icon-sm" />
+                  <span>Скачать</span>
+                </button>
+                <button
+                  type="button"
+                  class="compact-btn"
+                  :disabled="busyActive"
+                  :class="{ 'is-busy': busyButton === 'bak-restore' }"
+                  @click="restoreBackup(b.name)"
+                >
+                  Восстановить
+                </button>
+                <button
+                  type="button"
+                  class="ghost danger icon-btn"
+                  aria-label="Удалить бэкап"
+                  title="Удалить бэкап"
+                  :disabled="busyActive"
+                  @click="deleteBackup(b.name)"
+                >
+                  <Icon name="trash" class="icon-sm" />
+                </button>
+              </div>
+            </div>
+          </div>
+          <p v-else class="panel-d sub-note">Сохранённых бэкапов пока нет.</p>
+        </section>
+      </div>
+
+      <div v-show="activeCategory === 'bypass'" class="settings-category">
+        <section id="sec-modes" class="panel" :class="{ 'is-target': targetSectionId === 'sec-modes' }">
+          <div class="panel-h"><h2>Режимы обхода</h2></div>
+          <p class="panel-d">Авторотация, hostlist, fallback, DNS, UDP games, RST и reasm.</p>
+          <div class="grid-2">
+            <label v-for="m in modes" :key="m.key" class="toggle-row">
+              <span>{{ m.title }}</span>
+              <input
+                type="checkbox"
+                :checked="!!modeOn(m)"
+                :disabled="busyActive"
+                @change="toggleMode(m, ($event.target as HTMLInputElement).checked)"
+              >
+            </label>
+          </div>
+          <p v-if="udpGamesSettings?.ports" class="panel-d sub-note">
+            UDP Games порты: <code>{{ udpGamesSettings.ports }}</code> · стратегия профиля 7 во вкладке «Стратегии».
+          </p>
+        </section>
+
+        <section id="sec-tls" class="panel" :class="{ 'is-target': targetSectionId === 'sec-tls' }">
+          <div class="panel-h">
+            <h2>TLS / QUIC блобы и SNI</h2>
+            <span class="chip">{{ tlsBlobSettings?.current_mode || '-' }}</span>
+          </div>
+          <p class="panel-d">
+            Глобальный TLS blob: <code>{{ tlsBlobSettings?.current_blob || tlsBlobSettings?.current_mode || '-' }}</code>.
+            Управление глобальным и профильными блобами (включая QUIC/5), режимами фейков, SNI-пулом и загрузкой бинарных файлов вынесено в отдельный раздел.
+          </p>
+          <div class="actions">
+            <router-link class="btn-link" to="/blobs-sni">
+              <span>Открыть «Блобы и SNI»</span>
+              <Icon name="arrow-right" class="icon-sm" />
+            </router-link>
+          </div>
+        </section>
+
+        <section id="sec-wg" class="panel" :class="{ 'is-target': targetSectionId === 'sec-wg' }">
+          <div class="panel-h">
+            <h2>WireGuard fakes</h2>
+            <span class="chip" :class="{ on: wgOn }">{{ wgOn ? 'вкл' : 'выкл' }}</span>
+          </div>
+          <div class="grid-2">
+            <label class="toggle-row">
+              <span>Включить WG-стратегию</span>
+              <input v-model="wgOn" type="checkbox" :disabled="busyActive">
+            </label>
+            <label class="field">
+              <span>Repeats</span>
+              <input v-model.number="wgRepeats" type="number" min="2" max="99" :disabled="busyActive">
+            </label>
+            <label class="field field-full">
+              <span>Blob</span>
+              <select v-model="wgBlob" :disabled="busyActive">
+                <option v-for="b in (wgBlobSettings?.available_blobs || [])" :key="b" :value="b">{{ b }}</option>
+              </select>
+            </label>
+          </div>
+          <div class="actions section-actions">
+            <button type="button" class="primary" :disabled="busyActive" :class="{ 'is-busy': busyButton === 'wg' }" @click="saveWg(true)">
+              Сохранить WG
+            </button>
+          </div>
+        </section>
+
+        <section id="sec-wssize" class="panel" :class="{ 'is-target': targetSectionId === 'sec-wssize' }">
+          <div class="panel-h">
+            <h2>WSSIZE ramp</h2>
+            <span v-if="wssizeRampSettings" class="chip" :class="{ on: wssizeOn }">{{ wssizeOn ? 'вкл' : 'выкл' }}</span>
+          </div>
+          <p v-if="!wssizeRampSettings" class="panel-d">Настройка недоступна в этой сборке или ещё не загружена.</p>
+          <template v-else>
+            <p class="panel-d">
+              Googlevideo IP: <strong class="mono">{{ wssizeRampSettings.googlevideo_ips }}</strong>
+              <template v-if="(wssizeRampSettings.googlevideo_local_ips ?? 0) > 0"> · локально: {{ wssizeRampSettings.googlevideo_local_ips }}</template>
+              <template v-if="(wssizeRampSettings.googlevideo_hosts ?? 0) > 0"> · SNI-хостов: {{ wssizeRampSettings.googlevideo_hosts }}</template>
+              · DNS-сбор: {{ wssizeRampSettings.googlevideo_local_collection }}
+              <template v-if="wssizeRampSettings.googlevideo_generated"> · от {{ wssizeRampSettings.googlevideo_generated.slice(0, 16).replace('T', ' ') }} UTC</template>
+            </p>
+            <div class="grid-2">
+              <label class="toggle-row field-full">
+                <span>Включить wssize_ramp</span>
+                <input v-model="wssizeOn" type="checkbox" :disabled="busyActive">
+              </label>
+              <label class="field">
+                <span>Режим</span>
+                <select v-model="wssizeMode" :disabled="busyActive">
+                  <option value="full">full</option>
+                  <option value="lite">lite</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Scale (0-14)</span>
+                <input v-model.number="wssizeScale" type="number" min="0" max="14" :disabled="busyActive">
+              </label>
+            </div>
+            <div class="actions section-actions">
+              <button type="button" class="primary" :disabled="busyActive" :class="{ 'is-busy': busyButton === 'wssize' }" @click="saveWssize">
+                Сохранить
+              </button>
+              <button type="button" class="ghost" :disabled="busyActive" :class="{ 'is-busy': busyButton === 'wssize-refresh' }" @click="refreshWssizeIps">
+                <Icon name="refresh" class="icon-sm" />
+                <span>Обновить IP</span>
+              </button>
+            </div>
+          </template>
+        </section>
+      </div>
+
+      <div v-show="activeCategory === 'network'" class="settings-category">
+        <section id="sec-firewall" class="panel" :class="{ 'is-target': targetSectionId === 'sec-firewall' }">
+          <div class="panel-h"><h2>Firewall / Offload</h2></div>
+          <p class="panel-d">Тип межсетевого экрана и flow offload.</p>
+          <div class="grid-2">
+            <div class="fw-pair">
+              <label class="field">
+                <span>FWTYPE</span>
+                <select v-model="fw" :disabled="busyActive">
+                  <option value="iptables">iptables</option>
+                  <option value="nftables">nftables</option>
+                </select>
+              </label>
+              <button type="button" :class="{ primary: fwDirty }" :disabled="busyActive" @click="saveSelect('fwtype', fw, 'FWTYPE')">
+                Сохранить FW
+              </button>
+            </div>
+            <div class="fw-pair">
+              <label class="field">
+                <span>FLOWOFFLOAD</span>
+                <select v-model="offload" :disabled="busyActive">
+                  <option value="donttouch">donttouch</option>
+                  <option value="none">none</option>
+                  <option value="software">software</option>
+                  <option value="hardware">hardware</option>
+                </select>
+              </label>
+              <button type="button" :class="{ primary: offloadDirty }" :disabled="busyActive" @click="saveSelect('flowoffload', offload, 'Offload')">
+                Сохранить Offload
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <section id="sec-ifaces" class="panel" :class="{ 'is-target': targetSectionId === 'sec-ifaces' }">
+          <div class="panel-h">
+            <h2>Интерфейсы WAN / LAN</h2>
+            <span v-if="ifacesSettings?.needs_autodetect" class="chip is-warn">нужно задать</span>
+          </div>
+          <p class="panel-d">
+            На Keenetic/Entware без <code>IFACE_WAN</code> / <code>IFACE_LAN</code> правила NFQUEUE не цепляют трафик.
+            WAN: uplink (default route), LAN: локальный bridge (обычно <code>br0</code>).
+          </p>
+          <p v-if="ifacesSettings?.suggested" class="panel-d">
+            Автоопределение:
+            WAN=<code>{{ ifacesSettings.suggested.wan || '-' }}</code>,
+            LAN=<code>{{ ifacesSettings.suggested.lan || '-' }}</code>
+            <template v-if="ifacesSettings.suggested.source"> · {{ ifacesSettings.suggested.source }}</template>
+          </p>
+          <div class="grid-2">
+            <label class="field">
+              <span>IFACE_WAN (внешний)</span>
+              <select v-model="ifaceWan" :disabled="busyActive">
+                <option v-for="n in ifaceOptions" :key="'w-' + n" :value="n">{{ n }}</option>
               </select>
             </label>
             <label class="field">
-              <span>Scale (0–14)</span>
-              <input v-model.number="wssizeScale" type="number" min="0" max="14" :disabled="busyActive">
+              <span>IFACE_LAN (локальный)</span>
+              <select v-model="ifaceLan" :disabled="busyActive">
+                <option v-for="n in ifaceOptions" :key="'l-' + n" :value="n">{{ n }}</option>
+              </select>
             </label>
           </div>
-          <div class="actions" style="margin-top:0.8rem">
-            <button type="button" class="primary" :disabled="busyActive" :class="{ 'is-busy': busyButton === 'wssize' }" @click="saveWssize">Сохранить</button>
-            <button type="button" class="ghost" :disabled="busyActive" :class="{ 'is-busy': busyButton === 'wssize-refresh' }" @click="refreshWssizeIps">Обновить IP</button>
+          <div class="actions section-actions">
+            <button type="button" class="primary" :disabled="busyActive" :class="{ 'is-busy': busyButton === 'ifaces' }" @click="saveIfaces">
+              Сохранить
+            </button>
+            <button type="button" :disabled="busyActive" :class="{ 'is-busy': busyButton === 'ifaces-auto' }" @click="redetectIfaces">
+              Определить заново
+            </button>
           </div>
-        </template>
-      </section>
+        </section>
 
-      </div>
-      <div class="settings-category" v-show="activeCategory === 'network'">
-      <div id="grp-net" class="settings-group">
-        <h2>Сеть</h2>
-        <p>Firewall, интерфейсы WAN/LAN, порты NFQUEUE и client scopes.</p>
-      </div>
-
-      <section id="sec-firewall" class="panel">
-        <div class="panel-h"><h2>Firewall / Offload</h2></div>
-        <p class="panel-d">Тип межсетевого экрана и flow offload.</p>
-        <div class="grid-2">
-          <label class="field">
-            <span>FWTYPE</span>
-            <select v-model="fw" :disabled="busyActive">
-              <option value="iptables">iptables</option>
-              <option value="nftables">nftables</option>
+        <section id="sec-ports" class="panel" :class="{ 'is-target': targetSectionId === 'sec-ports' }">
+          <div class="panel-h"><h2>Порты NFQWS2</h2></div>
+          <p class="panel-d">Дополнительные порты, которые обрабатывает nfqws2.</p>
+          <div class="port-add-form">
+            <select v-model="portProto" :disabled="busyActive" aria-label="Протокол">
+              <option value="tcp">TCP</option>
+              <option value="udp">UDP</option>
             </select>
-          </label>
-          <label class="field">
-            <span>FLOWOFFLOAD</span>
-            <select v-model="offload" :disabled="busyActive">
-              <option value="donttouch">donttouch</option>
-              <option value="none">none</option>
-              <option value="software">software</option>
-              <option value="hardware">hardware</option>
-            </select>
-          </label>
-        </div>
-        <div class="actions" style="margin-top:0.8rem">
-          <button type="button" class="primary" :disabled="busyActive" @click="saveSelect('fwtype', fw, 'FWTYPE')">Сохранить FW</button>
-          <button type="button" class="primary" :disabled="busyActive" @click="saveSelect('flowoffload', offload, 'Offload')">Сохранить Offload</button>
-        </div>
-      </section>
-
-      <section id="sec-ifaces" class="panel">
-        <div class="panel-h">
-          <h2>Интерфейсы WAN / LAN</h2>
-          <span v-if="ifacesSettings?.needs_autodetect" class="chip">нужно задать</span>
-        </div>
-        <p class="panel-d">
-          На Keenetic/Entware без <code>IFACE_WAN</code>/<code>IFACE_LAN</code> правила NFQUEUE не цепляют трафик.
-          WAN — uplink (default route), LAN — локальный bridge (обычно <code>br0</code>).
-        </p>
-        <p v-if="ifacesSettings?.suggested" class="panel-d">
-          Автоопределение:
-          WAN=<code>{{ ifacesSettings.suggested.wan || '—' }}</code>,
-          LAN=<code>{{ ifacesSettings.suggested.lan || '—' }}</code>
-          <template v-if="ifacesSettings.suggested.source"> · {{ ifacesSettings.suggested.source }}</template>
-        </p>
-        <div class="grid-2">
-          <label class="field">
-            <span>IFACE_WAN (внешний)</span>
-            <select v-model="ifaceWan" :disabled="busyActive">
-              <option v-for="n in ifaceOptions" :key="'w-'+n" :value="n">{{ n }}</option>
-            </select>
-          </label>
-          <label class="field">
-            <span>IFACE_LAN (локальный)</span>
-            <select v-model="ifaceLan" :disabled="busyActive">
-              <option v-for="n in ifaceOptions" :key="'l-'+n" :value="n">{{ n }}</option>
-            </select>
-          </label>
-        </div>
-        <div class="actions" style="margin-top:0.8rem">
-          <button type="button" class="primary" :disabled="busyActive" :class="{ 'is-busy': busyButton === 'ifaces' }" @click="saveIfaces">Сохранить</button>
-          <button type="button" :disabled="busyActive" :class="{ 'is-busy': busyButton === 'ifaces-auto' }" @click="redetectIfaces">Определить заново</button>
-        </div>
-      </section>
-
-      <section id="sec-ports" class="panel">
-        <div class="panel-h"><h2>Порты NFQWS2</h2></div>
-        <p class="panel-d">Дополнительные порты, которые обрабатывает nfqws2.</p>
-        <div class="row">
-          <select v-model="portProto" :disabled="busyActive" style="max-width:7rem">
-            <option value="tcp">TCP</option>
-            <option value="udp">UDP</option>
-          </select>
-          <input v-model="portValue" :disabled="busyActive" placeholder="443 или 1000-2000" style="flex:1;min-width:10rem">
-          <button type="button" class="primary" :disabled="busyActive" @click="addPort">Добавить</button>
-        </div>
-        <p v-if="ports?.[portProto]?.full" class="panel-d">Текущие: <code>{{ ports[portProto]?.full }}</code></p>
-        <div class="domain-list" style="margin-top:0.8rem">
-          <div v-for="p in portList" :key="p" class="domain-item">
-            <code>{{ p }}</code>
-            <button type="button" class="ghost danger" :disabled="busyActive" @click="removePort(p)">Удалить</button>
+            <input v-model="portValue" :disabled="busyActive" placeholder="443 или 1000-2000" aria-label="Порт или диапазон">
+            <button type="button" class="primary" :disabled="busyActive" @click="addPort">
+              <Icon name="plus" class="icon-sm" />
+              <span>Добавить</span>
+            </button>
           </div>
-          <p v-if="!portList.length" class="panel-d">Пользовательских портов пока нет.</p>
-        </div>
-      </section>
-
-      <section id="sec-scopes" class="panel">
-        <div class="panel-h"><h2>Client scopes</h2><span class="chip" :class="{ on: scopeForm.enable }">{{ scopeForm.enable ? 'вкл' : 'выкл' }}</span></div>
-        <p class="panel-d">Разные стратегии для разных клиентов по mark. Локи — во вкладке «Стратегии».</p>
-        <div class="grid-2">
-          <label class="toggle"><input v-model="scopeForm.enable" type="checkbox" :disabled="busyActive"><span>Включить режим mark</span></label>
-          <label class="field"><span>mask</span><input v-model="scopeForm.mask" :disabled="busyActive"></label>
-          <label class="field"><span>shift</span><input v-model="scopeForm.shift" type="number" min="0" max="31" :disabled="busyActive"></label>
-          <label class="field"><span>max</span><input v-model="scopeForm.max" type="number" min="1" max="255" :disabled="busyActive"></label>
-        </div>
-        <div class="actions" style="margin-top:0.8rem">
-          <button type="button" class="primary" :disabled="busyActive" :class="{ 'is-busy': busyButton === 'scope' }" @click="saveScope">Сохранить scopes</button>
-        </div>
-        <hr>
-        <p class="panel-d">IP клиента → mark scope. Устройства с этим IP будут использовать стратегии выбранного mark.</p>
-        <div class="row">
-          <input v-model="clientIP" :disabled="busyActive" placeholder="192.168.1.10 или IPv6" style="flex:1;min-width:12rem">
-          <label class="field" style="max-width:9rem"><span>Mark ID</span><input v-model="clientScopeID" :disabled="busyActive" type="number" min="1" :max="scopes.max_scope || 255"></label>
-          <button type="button" class="primary" :disabled="busyActive" @click="addClientScope">Добавить клиента</button>
-        </div>
-        <div class="domain-list" style="margin-top:0.8rem">
-          <div v-for="mapping in clientMappings" :key="mapping.ip" class="domain-item">
-            <code>{{ mapping.ip }}</code><span>{{ mapping.scope }}</span>
-            <button type="button" class="ghost danger" :disabled="busyActive" @click="removeClientScope(mapping)">Удалить</button>
+          <p v-if="ports?.[portProto]?.full" class="panel-d sub-note">Текущие: <code>{{ ports[portProto]?.full }}</code></p>
+          <div v-if="portList.length" class="list-stack list-top-gap">
+            <div v-for="p in portList" :key="p" class="list-row compact-item">
+              <code>{{ p }}</code>
+              <button
+                type="button"
+                class="ghost danger icon-btn"
+                aria-label="Удалить порт"
+                title="Удалить порт"
+                :disabled="busyActive"
+                @click="removePort(p)"
+              >
+                <Icon name="trash" class="icon-sm" />
+              </button>
+            </div>
           </div>
-          <p v-if="!clientMappings.length" class="panel-d">IP-маппинги ещё не добавлены.</p>
-        </div>
-      </section>
+          <p v-else class="panel-d sub-note">Пользовательских портов пока нет.</p>
+        </section>
 
+        <section id="sec-scopes" class="panel" :class="{ 'is-target': targetSectionId === 'sec-scopes' }">
+          <div class="panel-h">
+            <h2>Client scopes</h2>
+            <span class="chip" :class="{ on: scopeForm.enable }">{{ scopeForm.enable ? 'вкл' : 'выкл' }}</span>
+          </div>
+          <p class="panel-d">Разные стратегии для разных клиентов по mark. Локи задаются во вкладке «Стратегии».</p>
+          <div class="grid-2">
+            <label class="toggle-row">
+              <span>Включить режим mark</span>
+              <input v-model="scopeForm.enable" type="checkbox" :disabled="busyActive">
+            </label>
+            <label class="field"><span>mask</span><input v-model="scopeForm.mask" :disabled="busyActive"></label>
+            <label class="field"><span>shift</span><input v-model="scopeForm.shift" type="number" min="0" max="31" :disabled="busyActive"></label>
+            <label class="field"><span>max</span><input v-model="scopeForm.max" type="number" min="1" max="255" :disabled="busyActive"></label>
+          </div>
+          <div class="actions section-actions">
+            <button type="button" class="primary" :disabled="busyActive" :class="{ 'is-busy': busyButton === 'scope' }" @click="saveScope">
+              Сохранить scopes
+            </button>
+          </div>
+
+          <hr class="panel-divider">
+
+          <p class="panel-d">IP клиента -> mark scope. Устройства с этим IP будут использовать стратегии выбранного mark.</p>
+          <div class="client-scope-form">
+            <label class="field">
+              <span>IP клиента</span>
+              <input v-model="clientIP" :disabled="busyActive" placeholder="192.168.1.10 или IPv6">
+            </label>
+            <label class="field">
+              <span>Mark ID</span>
+              <input v-model="clientScopeID" :disabled="busyActive" type="number" min="1" :max="scopes.max_scope || 255">
+            </label>
+            <button type="button" class="primary" :disabled="busyActive" @click="addClientScope">
+              <Icon name="plus" class="icon-sm" />
+              <span>Добавить</span>
+            </button>
+          </div>
+          <div v-if="clientMappings.length" class="list-stack list-top-gap">
+            <div v-for="mapping in clientMappings" :key="mapping.ip" class="list-row compact-item">
+              <div class="item-meta">
+                <code>{{ mapping.ip }}</code>
+                <span class="chip">{{ mapping.scope }}</span>
+              </div>
+              <button
+                type="button"
+                class="ghost danger icon-btn"
+                aria-label="Удалить клиента"
+                title="Удалить клиента"
+                :disabled="busyActive"
+                @click="removeClientScope(mapping)"
+              >
+                <Icon name="trash" class="icon-sm" />
+              </button>
+            </div>
+          </div>
+          <p v-else class="panel-d sub-note">IP-маппинги ещё не добавлены.</p>
+        </section>
       </div>
-      <div class="settings-category" v-show="activeCategory === 'diagnostics'">
-      <div id="grp-svc" class="settings-group">
-        <h2>Диагностика</h2>
-        <p>Версия zapret2, сырой конфиг и журнал ошибок.</p>
-      </div>
 
-      <section id="sec-zapret" class="panel">
-        <ZapretVersionManager />
-      </section>
+      <div v-show="activeCategory === 'diagnostics'" class="settings-category">
+        <section id="sec-zapret" class="panel" :class="{ 'is-target': targetSectionId === 'sec-zapret' }">
+          <ZapretVersionManager />
+        </section>
 
-      <section id="sec-config" class="panel">
-        <div class="panel-h">
-          <h2>Конфиг zapret2</h2>
-          <button type="button" class="ghost" :disabled="busyActive" @click="loadConfig">Перечитать</button>
-        </div>
-        <p class="panel-d">Сырой файл · <code>{{ configPath || '/opt/zapret2/config' }}</code></p>
-        <textarea v-if="configLoaded" v-model="configText" class="config-editor" :disabled="busyActive" spellcheck="false"></textarea>
-        <p v-else class="loading">Загрузка конфига…</p>
-        <div class="actions" style="margin-top:0.8rem">
-          <button type="button" class="primary" :disabled="busyActive || !configLoaded" :class="{ 'is-busy': busyButton === 'cfg-save' }" @click="saveConfig">Сохранить и перезапустить</button>
-        </div>
-      </section>
+        <section id="sec-config" class="panel" :class="{ 'is-target': targetSectionId === 'sec-config' }">
+          <div class="panel-h">
+            <h2>Конфиг zapret2</h2>
+            <button type="button" class="ghost compact-btn" :disabled="busyActive" @click="loadConfig">
+              <Icon name="refresh" class="icon-sm" />
+              <span>Перечитать</span>
+            </button>
+          </div>
+          <p class="panel-d">Сырой файл · <code>{{ configPath || '/opt/zapret2/config' }}</code></p>
+          <textarea v-if="configLoaded" v-model="configText" class="config-editor" :disabled="busyActive" spellcheck="false" />
+          <div v-else class="skeleton-row is-tall" aria-label="Загрузка конфига" />
+          <div class="actions section-actions">
+            <button
+              type="button"
+              class="primary"
+              :disabled="busyActive || !configLoaded"
+              :class="{ 'is-busy': busyButton === 'cfg-save' }"
+              @click="saveConfig"
+            >
+              Сохранить и перезапустить
+            </button>
+          </div>
+        </section>
 
-      <section id="sec-errors" class="panel">
-        <div class="panel-h">
-          <h2>Ошибки nfqws2</h2>
-          <button type="button" class="ghost" :disabled="busyActive" @click="loadErrors">Обновить</button>
-        </div>
-        <p class="panel-d">Последние сообщения демона nfqws2.</p>
-        <p v-if="!errors.available" class="panel-d">Журнал пуст или не найден.</p>
-        <template v-else>
-          <p class="panel-d">
-            <code>{{ errors.path }}</code> · строк: {{ errors.lines }}
-            <span v-if="errors.suppressed_conntrack > 0" class="chip" style="margin-left:0.4rem">
-              скрыто conntrack-сообщений: {{ errors.suppressed_conntrack }}
-            </span>
-          </p>
-          <pre class="error-log">{{ errors.content || '(пусто)' }}</pre>
-        </template>
-      </section>
+        <section id="sec-errors" class="panel" :class="{ 'is-target': targetSectionId === 'sec-errors' }">
+          <div class="panel-h">
+            <h2>Ошибки nfqws2</h2>
+            <button type="button" class="ghost compact-btn" :disabled="busyActive" @click="loadErrors">
+              <Icon name="refresh" class="icon-sm" />
+              <span>Обновить</span>
+            </button>
+          </div>
+          <p class="panel-d">Последние сообщения демона nfqws2.</p>
+          <p v-if="!errors.available" class="panel-d">Журнал пуст или не найден.</p>
+          <template v-else>
+            <div class="error-meta">
+              <code>{{ errors.path }}</code>
+              <span class="chip">строк: {{ errors.lines }}</span>
+              <span v-if="errors.suppressed_conntrack > 0" class="chip is-warn">
+                скрыто conntrack: {{ errors.suppressed_conntrack }}
+              </span>
+            </div>
+            <pre class="error-log">{{ errors.content || '(пусто)' }}</pre>
+          </template>
+        </section>
       </div>
     </template>
-      </div>
-    </div>
   </section>
 </template>
+
+<style scoped>
+.settings-category {
+  display: grid;
+  gap: 0.9rem;
+  min-width: 0;
+}
+.panel { scroll-margin-top: calc(var(--topbar-h) + 1rem); }
+.field-full { grid-column: 1 / -1; }
+.section-actions { margin-top: 0.85rem; }
+.sub-note { margin: 0.7rem 0 0; }
+.list-top-gap { margin-top: 0.8rem; }
+
+.updates-bar {
+  display: grid;
+  grid-template-columns: minmax(12rem, 1fr) auto auto;
+  gap: 0.5rem;
+  align-items: end;
+}
+
+.subsection {
+  display: grid;
+  gap: 0.55rem;
+}
+.subsection h3 {
+  margin: 0;
+  font-size: 0.94rem;
+  font-weight: 700;
+}
+.rec-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.fw-pair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.5rem;
+  align-items: end;
+}
+
+.port-add-form {
+  display: grid;
+  grid-template-columns: 7rem minmax(10rem, 1fr) auto;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.client-scope-form {
+  display: grid;
+  grid-template-columns: minmax(12rem, 1fr) 8.5rem auto;
+  gap: 0.55rem;
+  align-items: end;
+}
+
+.compact-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 0.75rem;
+}
+.item-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+}
+.item-meta small { color: var(--muted); font-size: 0.78rem; }
+.item-meta code { overflow-wrap: anywhere; }
+
+.error-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+  margin-bottom: 0.65rem;
+}
+
+@media (max-width: 720px) {
+  .updates-bar,
+  .fw-pair,
+  .port-add-form,
+  .client-scope-form {
+    grid-template-columns: 1fr;
+  }
+}
+</style>
