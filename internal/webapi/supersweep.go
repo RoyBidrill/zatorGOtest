@@ -3,6 +3,7 @@ package webapi
 import (
 	"context"
 	"errors"
+	"log"
 	"net/http"
 	"path/filepath"
 	"strconv"
@@ -41,7 +42,21 @@ func (s *Server) sweeperOrDefault() (Sweeper, error) {
 	if s.sweeper != nil {
 		return s.sweeper, nil
 	}
+	return s.newSweeperLocked()
+}
 
+// sweeperForStart пересоздаёт *sweep.Coordinator перед новым стартом, чтобы
+// подхватить свежий config zapret2 (FWTYPE, WSSIZE, стратегии, блобы).
+func (s *Server) sweeperForStart() (Sweeper, error) {
+	s.sweepMu.Lock()
+	defer s.sweepMu.Unlock()
+	if s.sweeper == nil || (!s.sweeperInjected && !s.sweeper.Running()) {
+		return s.newSweeperLocked()
+	}
+	return s.sweeper, nil
+}
+
+func (s *Server) newSweeperLocked() (Sweeper, error) {
 	cfgLive, installed := s.readConfig()
 	if !installed {
 		return nil, s.notInstalledErr()
@@ -88,8 +103,15 @@ func (s *Server) sweeperOrDefault() (Sweeper, error) {
 		},
 		MaxStrategy: s.maxStrategy,
 		GVURL:       func(ctx context.Context) string { return "https://" + checker.ClusterDomain(ctx) },
+		Logf: func(format string, args ...any) {
+			log.Printf("supersweep: "+format, args...)
+		},
 		OnComplete: func(rep sweep.Report, err error) {
-			if err == nil && rep.State == sweep.StateDone && len(rep.Applied) > 0 {
+			if err != nil {
+				log.Printf("supersweep: остановлен с ошибкой: %v", err)
+				return
+			}
+			if rep.State == sweep.StateDone && len(rep.Applied) > 0 {
 				s.notifyTelemetry()
 			}
 		},
@@ -152,7 +174,15 @@ func (s *Server) supersweepAction(p params) (map[string]any, error) {
 	s.runtimeMu.Lock()
 	defer s.runtimeMu.Unlock()
 
-	sw, err := s.sweeperOrDefault()
+	var (
+		sw  Sweeper
+		err error
+	)
+	if action == "start" {
+		sw, err = s.sweeperForStart()
+	} else {
+		sw, err = s.sweeperOrDefault()
+	}
 	if err != nil {
 		return nil, errf(http.StatusServiceUnavailable, "Суперавтопрогон недоступен: "+err.Error())
 	}

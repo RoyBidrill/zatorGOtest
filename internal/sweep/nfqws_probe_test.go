@@ -1,10 +1,15 @@
 package sweep
 
 import (
+	"context"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/AloofLibra/zator/internal/config"
 	"github.com/AloofLibra/zator/internal/firewall"
@@ -321,5 +326,196 @@ NFQWS2_OPT="
 	}
 	if _, err := os.Stat(filepath.Join(probe.OrchestraDir(), "sni_pool.pin")); !os.IsNotExist(err) {
 		t.Fatalf("probe sni_pool.pin should be cleaned up on Stop, err=%v", err)
+	}
+}
+
+func TestParseQueueOwnerPID(t *testing.T) {
+	raw := "65535 864764     0 2 65531     0     0     1285  1\n" +
+		"  300 1047190     0 2 65531     0     0   670354  1\n"
+	if pid, ok := parseQueueOwnerPID([]byte(raw), 65535); !ok || pid != 864764 {
+		t.Fatalf("qnum=65535 got (%d, %v), want (864764, true)", pid, ok)
+	}
+	if pid, ok := parseQueueOwnerPID([]byte(raw), 300); !ok || pid != 1047190 {
+		t.Fatalf("qnum=300 got (%d, %v), want (1047190, true)", pid, ok)
+	}
+	if _, ok := parseQueueOwnerPID([]byte(raw), 1234); ok {
+		t.Fatal("unexpected match for absent queue")
+	}
+	if _, ok := parseQueueOwnerPID([]byte("65535 -1 0\n"), 65535); ok {
+		t.Fatal("negative pid must be rejected")
+	}
+}
+
+func TestIsOwnedProbeCmdline(t *testing.T) {
+	zCmd := func(args ...string) []byte {
+		return []byte(strings.Join(args, "\x00") + "\x00")
+	}
+	workDir := "/tmp/zator/c5afee7f/supersweep-probe"
+	tests := []struct {
+		name    string
+		cmdline []byte
+		want    bool
+	}{
+		{
+			name:    "supersweep probe exact",
+			cmdline: zCmd("/opt/zapret2/nfq2/nfqws2", "--user=nobody", "--qnum=65535", "--lua-init=@/tmp/zator/c5afee7f/supersweep-probe/lua/locked.lua"),
+			want:    true,
+		},
+		{
+			name:    "two-arg qnum and gv-seed path",
+			cmdline: zCmd("/opt/zapret2/nfq2/nfqws2", "--qnum", "65535", "--lua-init=@/tmp/z2r-gv-seed-123/lua/locked.lua"),
+			want:    true,
+		},
+		{
+			name:    "production nfqws2 on qnum 300",
+			cmdline: zCmd("/opt/zapret2/nfq2/nfqws2", "--user=nobody", "--qnum=300", "--lua-init=@/opt/zator/lua/locked.lua"),
+			want:    false,
+		},
+		{
+			name:    "foreign nfqws2 on qnum 65535 without probe lua dir",
+			cmdline: zCmd("/opt/zapret2/nfq2/nfqws2", "--qnum=65535", "--lua-init=@/etc/custom/locked.lua"),
+			want:    false,
+		},
+		{
+			name:    "non-nfqws2 binary even with matching args",
+			cmdline: zCmd("/usr/bin/python3", "--qnum=65535", "--lua-init=@/tmp/zator/c5afee7f/supersweep-probe/lua/locked.lua"),
+			want:    false,
+		},
+		{
+			name:    "nfqws2 with wrong qnum even with probe lua",
+			cmdline: zCmd("/opt/zapret2/nfq2/nfqws2", "--qnum=300", "--lua-init=@/tmp/zator/c5afee7f/supersweep-probe/lua/locked.lua"),
+			want:    false,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isOwnedProbeCmdline(tc.cmdline, 65535, workDir); got != tc.want {
+				t.Fatalf("isOwnedProbeCmdline = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestReadLogTailAndFatalError(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "nfqws2.log")
+	content := strings.Repeat("info line ok\n", 400) + "LUA ERROR: test failure\ndetail line\n"
+	if err := os.WriteFile(logPath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !hasProbeFatalLogError(logPath) {
+		t.Fatal("expected LUA ERROR to be detected")
+	}
+	tail := readLogTail(logPath, 60)
+	if !strings.Contains(tail, "detail line") || len([]rune(tail)) > 60 {
+		t.Fatalf("unexpected tail: %q", tail)
+	}
+
+	cleanPath := filepath.Join(dir, "clean.log")
+	_ = os.WriteFile(cleanPath, []byte("started queue 65535\n"), 0o644)
+	if hasProbeFatalLogError(cleanPath) {
+		t.Fatal("clean log must not report fatal error")
+	}
+}
+
+func TestNfqwsProbeStartFailsWhenQueueOccupiedByForeignProcess(t *testing.T) {
+	root := t.TempDir()
+	p := paths.New(filepath.Join(root, "zator"), filepath.Join(root, "zapret2"))
+	_ = os.MkdirAll(p.LuaDir, 0o755)
+	bin := filepath.Join(root, "nfqws2-dummy")
+	_ = os.WriteFile(bin, []byte("x"), 0o755)
+	procRoot := filepath.Join(root, "proc")
+	_ = os.MkdirAll(filepath.Join(procRoot, "424242"), 0o755)
+	_ = os.WriteFile(filepath.Join(procRoot, "424242", "cmdline"), []byte("/usr/bin/custom-nfq\x00--qnum=65535\x00"), 0o644)
+	qfile := filepath.Join(root, "nfnetlink_queue")
+	_ = os.WriteFile(qfile, []byte("65535 424242 0 2 65531 0 0 1 1\n"), 0o644)
+
+	cfg := config.Parse(`FWTYPE=iptables
+NFQWS2_OPT="
+--template=z2r_tcp_tls_common
+--new
+#Z2R_AUTO_STANDARD_1_BEGIN
+--lua-desync=fake:strategy=1
+#Z2R_AUTO_STANDARD_1_END
+--new
+"
+`)
+	launched := false
+	probe, err := NewNfqwsProbe(NfqwsProbeConfig{
+		Paths:     p,
+		Config:    cfg,
+		Binary:    bin,
+		Runner:    firewall.NewRecordingRunner("iptables"),
+		User:      "nobody",
+		UID:       65534,
+		GID:       65534,
+		QueueFile: qfile,
+		ProcRoot:  procRoot,
+		NewCmd: func(ctx context.Context, name string, args []string) *exec.Cmd {
+			launched = true
+			return exec.Command(name, args...)
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = probe.Start(context.Background(), 1)
+	if !errors.Is(err, ErrProbe) || !strings.Contains(err.Error(), "424242") || !strings.Contains(err.Error(), "custom-nfq") {
+		t.Fatalf("expected foreign queue error with PID and name, got: %v", err)
+	}
+	if launched {
+		t.Fatal("probe process must not be launched while queue 65535 is held by a foreign process")
+	}
+}
+
+func TestNfqwsProbeStartCapturesStderrToLog(t *testing.T) {
+	root := t.TempDir()
+	p := paths.New(filepath.Join(root, "zator"), filepath.Join(root, "zapret2"))
+	_ = os.MkdirAll(p.LuaDir, 0o755)
+	bin := filepath.Join(root, "nfqws2-dummy")
+	_ = os.WriteFile(bin, []byte("x"), 0o755)
+	cfg := config.Parse(`FWTYPE=iptables
+NFQWS2_OPT="
+--template=z2r_tcp_tls_common
+--new
+#Z2R_AUTO_STANDARD_1_BEGIN
+--lua-desync=fake:strategy=1
+#Z2R_AUTO_STANDARD_1_END
+--new
+"
+`)
+	probe, err := NewNfqwsProbe(NfqwsProbeConfig{
+		Paths:        p,
+		Config:       cfg,
+		Binary:       bin,
+		Runner:       firewall.NewRecordingRunner("iptables"),
+		User:         "nobody",
+		UID:          65534,
+		GID:          65534,
+		StartDelay:   150 * time.Millisecond,
+		StartTimeout: 500 * time.Millisecond,
+		NewCmd: func(ctx context.Context, _ string, _ []string) *exec.Cmd {
+			if runtime.GOOS == "windows" {
+				return exec.Command("cmd", "/c", "echo nfq_bind_queue: Permission denied 1>&2 & exit 1")
+			}
+			return exec.Command("sh", "-c", "echo 'nfq_bind_queue: Permission denied' >&2; exit 1")
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = probe.Start(context.Background(), 1)
+	_ = probe.Stop()
+	logData, readErr := os.ReadFile(probe.LogPath())
+	if readErr != nil || !strings.Contains(string(logData), "nfq_bind_queue: Permission denied") {
+		t.Fatalf("expected stderr captured in %s, got %q (readErr=%v)", probe.LogPath(), logData, readErr)
+	}
+	if runtime.GOOS != "windows" {
+		if !errors.Is(err, ErrProbe) || !strings.Contains(err.Error(), "nfq_bind_queue: Permission denied") {
+			t.Fatalf("expected immediate exit error to include log tail, got: %v", err)
+		}
+	}
+	if exitMsg := probe.probeExitedErr(); !strings.Contains(exitMsg.Error(), "nfq_bind_queue: Permission denied") {
+		t.Fatalf("probeExitedErr missing log tail: %v", exitMsg)
 	}
 }

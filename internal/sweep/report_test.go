@@ -318,3 +318,41 @@ func TestAppendLineAndReadTSV(t *testing.T) {
 		t.Error("missing file must give nil")
 	}
 }
+
+func TestReport_ErrorRoundTripJSONTSVAndCLI(t *testing.T) {
+	dir := fixtureDir(t, "cancelled", false)
+	writeFile(t, filepath.Join(dir, "status"),
+		"state=cancelled\nscope=default\nstarted=1700000000\nupdated=1700000100\nalive=\nerror=nfqws2 busy on qnum 65535\n")
+	rep, err := ReadReport(dir, ReportOptions{Final: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Error != "nfqws2 busy on qnum 65535" {
+		t.Fatalf("rep.Error = %q", rep.Error)
+	}
+	raw, err := rep.JSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"error":"nfqws2 busy on qnum 65535"`) {
+		t.Fatalf("JSON missing error field: %s", raw)
+	}
+	if !strings.Contains(rep.CLI(), "Ошибка: nfqws2 busy on qnum 65535") {
+		t.Fatalf("CLI missing error line:\n%s", rep.CLI())
+	}
+
+	archive := t.TempDir()
+	writeFile(t, filepath.Join(archive, LastReportFile), rep.TSV())
+	saved, err := ReadReport(filepath.Join(t.TempDir(), "missing"), ReportOptions{ArchiveDir: archive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.Error != "nfqws2 busy on qnum 65535" {
+		t.Fatalf("saved.Error = %q", saved.Error)
+	}
+
+	cleanRaw, err := IdleReport().JSON()
+	if err != nil || strings.Contains(string(cleanRaw), `"error"`) {
+		t.Fatalf("empty error must be omitted from JSON: %s (%v)", cleanRaw, err)
+	}
+}

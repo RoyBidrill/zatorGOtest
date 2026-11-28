@@ -8,7 +8,9 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -540,5 +542,32 @@ func TestTargetResult_JSONShape(t *testing.T) {
 	raw, _ = json.Marshal(skip)
 	if !strings.Contains(string(raw), `"download":null`) {
 		t.Errorf("download должен быть null: %s", raw)
+	}
+}
+
+func TestProbeDownload_HTTP11RepeatedNoReset(t *testing.T) {
+	var mu sync.Mutex
+	remoteAddrs := make(map[string]struct{})
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		remoteAddrs[r.RemoteAddr] = struct{}{}
+		mu.Unlock()
+		serveBody(w, r)
+	})
+	srv13 := newTLSServer(t, handler, tlsOpts{})
+	srv12 := newTLSServer(t, handler, tlsOpts{maxVersion: tls.VersionTLS12})
+
+	for _, srv := range []*httptest.Server{srv12, srv13} {
+		for i := 0; i < 10; i++ {
+			dl := ProbeDownload(context.Background(), srv.URL, testOpts())
+			if dl.State != DLOK || dl.Err != ErrNone || dl.Size != DefaultDownloadRange {
+				t.Fatalf("iteration %d on %s: got %+v, want ok size=%d err=%q", i, srv.URL, dl, DefaultDownloadRange, ErrNone)
+			}
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(remoteAddrs) != 20 {
+		t.Fatalf("expected 20 distinct TCP connections across probes, got %d", len(remoteAddrs))
 	}
 }

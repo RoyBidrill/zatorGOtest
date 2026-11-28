@@ -62,6 +62,7 @@ type Report struct {
 	Phase     string         `json:"phase"`
 	Completed int            `json:"completed"`
 	Total     int            `json:"total"`
+	Error     string         `json:"error,omitempty"`
 	Workers   []WorkerReport `json:"workers"`
 	Applied   []AppliedRow   `json:"applied"`
 	Domains   []DomainReport `json:"domains"`
@@ -145,7 +146,7 @@ func ReadReport(dir string, opts ReportOptions) (Report, error) {
 	rep := Report{
 		Available: true, State: state, Active: active, Source: SourceLive,
 		Started: int64(atoi(status["started"])), Updated: int64(atoi(status["updated"])),
-		Scope: scope, Phase: phase,
+		Scope: scope, Phase: phase, Error: strings.TrimSpace(status["error"]),
 	}
 
 	applied, winners := readApplied(filepath.Join(dir, fileApplied))
@@ -302,6 +303,9 @@ func (r Report) TSV() string {
 		}
 		fmt.Fprintf(&b, "D\t%s\t%s\t%s\n", cleanField(d.Domain), best, d.Verdict)
 	}
+	if errText := strings.TrimSpace(cleanField(r.Error)); errText != "" {
+		fmt.Fprintf(&b, "E\t%s\n", errText)
+	}
 	return b.String()
 }
 
@@ -356,6 +360,10 @@ func readSavedReport(path string) (Report, bool) {
 				}
 				rep.Domains = append(rep.Domains, d)
 			}
+		case "E":
+			if len(r) >= 2 {
+				rep.Error = strings.TrimSpace(r[1])
+			}
 		}
 	}
 	if !haveR {
@@ -393,6 +401,9 @@ func (r Report) CLI() string {
 	if r.Source == SourceSaved {
 		b.WriteString("Показан сохранённый результат последнего прогона.\n")
 	}
+	if r.Error != "" {
+		fmt.Fprintf(&b, "Ошибка: %s\n", r.Error)
+	}
 	for _, w := range r.Workers {
 		fmt.Fprintf(&b, "\n%s (профиль %d): %d/%d; зелёных %d, жёлтых %d, красных %d\n", w.Label, w.Profile, w.Completed, w.Total, w.OK, w.Warn, w.Fail)
 		if w.CurrentStrategy != nil {
@@ -419,6 +430,9 @@ func (r Report) CLI() string {
 			cand = strconv.Itoa(*d.BestStrategy)
 		}
 		fmt.Fprintf(&b, "РКН %s: %s, кандидат %s\n", d.Domain, d.Verdict, cand)
+	}
+	if errText := strings.TrimSpace(cleanField(r.Error)); errText != "" {
+		fmt.Fprintf(&b, "E\t%s\n", errText)
 	}
 	return b.String()
 }

@@ -250,6 +250,7 @@ export interface SupersweepPayload {
   phase: string
   completed: number
   total: number
+  error?: string
   workers: {
     name: string
     label: string

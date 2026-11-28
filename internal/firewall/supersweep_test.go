@@ -844,3 +844,49 @@ func TestParseNftOwned(t *testing.T) {
 		t.Errorf("got %v, want %v", got, want)
 	}
 }
+
+func TestSuperSweepNftForceCleanupOrphan(t *testing.T) {
+	table := "table inet zapret2 {\n" +
+		"\tchain postnat_hook {\n\t\tx comment \"z2r_supersweep\" # handle 11\n\t}\n" +
+		"\tchain z2r_supersweep_output {\n\t\tx comment \"z2r_supersweep\" # handle 21\n\t}\n" +
+		"}\n"
+	exists := true
+	r := NewRecordingRunner("nft")
+	r.Handler = nftSSHandler(&table, &exists)
+	s := newSS(t, ssConfig(BackendNftables), r)
+
+	if err := s.ForceCleanup(context.Background()); err != nil {
+		t.Fatalf("ForceCleanup: %v", err)
+	}
+	calls := r.Calls()
+	if len(calls) == 0 {
+		t.Fatal("expected nft cleanup calls on fresh SuperSweep")
+	}
+	txn := calls[len(calls)-1].Stdin
+	for _, want := range []string{
+		"delete rule inet zapret2 postnat_hook handle 11\n",
+		"delete rule inet zapret2 z2r_supersweep_output handle 21\n",
+		"delete chain inet zapret2 z2r_supersweep_output\n",
+	} {
+		if !strings.Contains(txn, want) {
+			t.Errorf("orphan cleanup missing %q:\n%s", want, txn)
+		}
+	}
+}
+
+func TestSuperSweepNftForceCleanupMissingTable(t *testing.T) {
+	r := NewRecordingRunner("nft")
+	r.Handler = func(c Command) ([]byte, error) {
+		if strings.Join(c.Args, " ") == "-a list table inet zapret2" {
+			return []byte("Error: No such file or directory\nlist table inet zapret2\n"), ErrExit1()
+		}
+		return nil, nil
+	}
+	s := newSS(t, ssConfig(BackendNftables), r)
+	if err := s.ForceCleanup(context.Background()); err != nil {
+		t.Fatalf("ForceCleanup with missing table must succeed, got: %v", err)
+	}
+	if s.nftActive || s.nftChain {
+		t.Errorf("expected nft flags cleared, got active=%v chain=%v", s.nftActive, s.nftChain)
+	}
+}

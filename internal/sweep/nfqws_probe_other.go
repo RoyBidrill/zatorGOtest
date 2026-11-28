@@ -3,6 +3,7 @@
 package sweep
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 )
@@ -34,4 +35,10 @@ func probeAlive(p *os.Process) error {
 
 func probeProcessRunning(p *os.Process) bool {
 	return p != nil && probeAlive(p) == nil
+}
+
+func pidRunning(_ string, _ int) bool { return false }
+
+func terminateOrphanPID(_ string, pid int) error {
+	return fmt.Errorf("orphan process cleanup is unsupported on this OS (pid %d)", pid)
 }

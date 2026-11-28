@@ -701,7 +701,11 @@ func monitorSweep(s *webapi.Server, out, errw io.Writer) int {
 		if !root {
 			fmt.Fprintln(out)
 			printSweepProgress(out, result)
-			fmt.Fprintln(out, "Supersweep завершён.")
+			if rep, ok := extractSweepReport(result); ok && rep.Error != "" {
+				fmt.Fprintln(out, "Supersweep остановлен с ошибкой.")
+			} else {
+				fmt.Fprintln(out, "Supersweep завершён.")
+			}
 			return 0
 		}
 		select {
@@ -713,17 +717,22 @@ func monitorSweep(s *webapi.Server, out, errw io.Writer) int {
 	}
 }
 
-func printSweepLine(out io.Writer, value any) {
+func extractSweepReport(value any) (sweep.Report, bool) {
 	root, ok := value.(map[string]any)
 	if !ok {
-		return
+		return sweep.Report{}, false
 	}
 	rep, ok := root["report"].(sweep.Report)
 	if !ok {
 		b, _ := json.Marshal(root["report"])
 		_ = json.Unmarshal(b, &rep)
 	}
-	if !rep.State.Valid() {
+	return rep, rep.State.Valid()
+}
+
+func printSweepLine(out io.Writer, value any) {
+	rep, ok := extractSweepReport(value)
+	if !ok {
 		return
 	}
 	pct := 0
@@ -770,16 +779,8 @@ func menuExit(r *bufio.Reader, out, errw io.Writer) bool {
 }
 
 func printSweepProgress(out io.Writer, value any) {
-	root, ok := value.(map[string]any)
+	rep, ok := extractSweepReport(value)
 	if !ok {
-		return
-	}
-	rep, ok := root["report"].(sweep.Report)
-	if !ok {
-		b, _ := json.Marshal(root["report"])
-		_ = json.Unmarshal(b, &rep)
-	}
-	if !rep.State.Valid() {
 		return
 	}
 	pct := 0
@@ -794,6 +795,9 @@ func printSweepProgress(out io.Writer, value any) {
 	}
 	filled := pct / 5
 	fmt.Fprintf(out, "Supersweep: %s\nПроверено: %d / %d\nПрогресс: [%s%s] %d%%\nВоркеры: %d\nСостояние: %s\nНайдено применений: %d\n", rep.Phase, rep.Completed, rep.Total, strings.Repeat("#", filled), strings.Repeat("-", 20-filled), pct, len(rep.Workers), rep.State, len(rep.Applied))
+	if rep.Error != "" {
+		fmt.Fprintf(out, "Ошибка: %s\n", rep.Error)
+	}
 }
 
 func menuDomains(r *bufio.Reader, out, errw io.Writer) int {

@@ -1,6 +1,7 @@
 package webapi
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"github.com/AloofLibra/zator/internal/netcheck"
 	"github.com/AloofLibra/zator/internal/orchestra"
 	"github.com/AloofLibra/zator/internal/provider"
+	"github.com/AloofLibra/zator/internal/sweep"
 	"github.com/AloofLibra/zator/internal/telemetry"
 )
 
@@ -724,5 +726,52 @@ func TestSettingsWssizeRefreshIPs(t *testing.T) {
 	w := settingGetMap(t, e, "wssize_ramp")
 	if w["googlevideo_ips"] != float64(3) || w["googlevideo_feed_enabled"] != true || w["googlevideo_generated"] != "2026-11-25T10:00:00Z" {
 		t.Fatalf("wssize_ramp = %v", w)
+	}
+}
+
+type waitingSweeper struct {
+	running   bool
+	cancelled bool
+	waited    bool
+	errMsg    string
+}
+
+func (w *waitingSweeper) Start(_ context.Context, _ sweep.Params) error {
+	w.running = true
+	return nil
+}
+func (w *waitingSweeper) Cancel() error {
+	w.cancelled = true
+	w.running = false
+	return nil
+}
+func (w *waitingSweeper) Wait() (sweep.Report, error) {
+	w.waited = true
+	return sweep.Report{State: sweep.StateCancelled, Error: w.errMsg}, nil
+}
+func (w *waitingSweeper) Report() (sweep.Report, error) {
+	return sweep.Report{Available: true, State: sweep.StateCancelled, Source: sweep.SourceLive, Error: w.errMsg}, nil
+}
+func (w *waitingSweeper) Running() bool { return w.running }
+
+func TestWebapiSupersweepCloseAndError(t *testing.T) {
+	e := newEnv(t, envOpts{})
+	ws := &waitingSweeper{running: true, errMsg: "NFQUEUE 65535 busy (PID 42)"}
+	srv, err := New(Options{App: e.app, Service: e.svc, Checker: e.checker, Sweeper: ws})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.srv = srv
+	e.ts.Close()
+	e.ts = httptest.NewServer(srv.Handler())
+
+	_, out := e.get("/api/settings?setting=supersweep")
+	if out["error"] != "NFQUEUE 65535 busy (PID 42)" {
+		t.Fatalf("expected error in supersweep GET payload, got %v", out)
+	}
+
+	srv.Close()
+	if !ws.cancelled || !ws.waited || ws.running {
+		t.Fatalf("Server.Close did not stop active sweeper: %+v", ws)
 	}
 }

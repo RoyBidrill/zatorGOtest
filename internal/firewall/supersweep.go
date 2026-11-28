@@ -794,10 +794,20 @@ func (s *SuperSweep) Reinstall(ctx context.Context) error {
 
 // ForceCleanup снимает Z2R_SS_* даже без живого in-memory state (после
 // потери *SuperSweep / неполного Stop). Для iptables сидирует полный
-// список хуков/цепочек и повторяет Stop с паузой RetryDelay.
+// список хуков/цепочек и повторяет Stop с паузой RetryDelay; для nftables
+// принудительно включает поиск собственных правил и цепочки.
 func (s *SuperSweep) ForceCleanup(ctx context.Context) error {
 	if s.cfg.Backend == BackendNftables {
-		return stopWithRetry(ctx, s)
+		s.cfg = s.cfg.withDefaults()
+		s.nftActive = true
+		s.nftChain = true
+		s.active = false
+		err := stopWithRetry(ctx, s)
+		if isNftNotFound(err) {
+			s.nftChain, s.nftActive = false, false
+			return nil
+		}
+		return err
 	}
 	s.cfg = s.cfg.withDefaults()
 	if !s.waitDone {
@@ -808,6 +818,14 @@ func (s *SuperSweep) ForceCleanup(ctx context.Context) error {
 	s.chains = reverse(superSweepChains)
 	s.active = false
 	return stopWithRetry(ctx, s)
+}
+
+func isNftNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "no such file or directory") || strings.Contains(msg, "does not exist")
 }
 
 func stopWithRetry(ctx context.Context, s *SuperSweep) error {

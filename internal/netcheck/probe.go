@@ -132,8 +132,10 @@ func (o Options) transport(minV, maxV uint16, st *connState) *http.Transport {
 		},
 		ForceAttemptHTTP2:   true,
 		TLSHandshakeTimeout: o.MaxTime,
-		DisableKeepAlives:   true,
-		DisableCompression:  true,
+		// Keep-alives are closed explicitly per probe via tr.CloseIdleConnections();
+		// omitting DisableKeepAlives avoids Connection: close so HTTP/1.1 servers
+		// do not close the TCP socket mid-read (WSAECONNRESET on Windows loopback).
+		DisableCompression: true,
 	}
 }
 

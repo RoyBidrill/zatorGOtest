@@ -120,8 +120,9 @@ type Server struct {
 	// чтобы не гонять службу во время прогона и наоборот.
 	runtimeMu sync.Mutex
 
-	sweepMu sync.Mutex
-	sweeper Sweeper
+	sweepMu         sync.Mutex
+	sweeper         Sweeper
+	sweeperInjected bool
 
 	zapretRelMu    sync.Mutex
 	zapretRelCache *zapretReleasesCache
@@ -141,9 +142,10 @@ func New(opts Options) (*Server, error) {
 		svc:      opts.Service,
 		checker:  opts.Checker,
 		provider: opts.Provider,
-		timeout:  opts.CheckTimeout,
-		now:      opts.Now,
-		sweeper:  opts.Sweeper,
+		timeout:         opts.CheckTimeout,
+		now:             opts.Now,
+		sweeper:         opts.Sweeper,
+		sweeperInjected: opts.Sweeper != nil,
 	}
 	if s.now == nil {
 		s.now = time.Now
@@ -480,4 +482,30 @@ func (s *Server) maybeRestart(ctx context.Context, p params) bool {
 		return false
 	}
 	return s.restartIfRunning(ctx)
+}
+
+// Close stops an active SuperSweep run and waits briefly for probe cleanup
+// before daemon shutdown.
+func (s *Server) Close() {
+	if s == nil {
+		return
+	}
+	s.sweepMu.Lock()
+	sw := s.sweeper
+	s.sweepMu.Unlock()
+	if sw == nil || !sw.Running() {
+		return
+	}
+	_ = sw.Cancel()
+	if waiter, ok := sw.(interface{ Wait() (sweep.Report, error) }); ok {
+		done := make(chan struct{})
+		go func() {
+			_, _ = waiter.Wait()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(2500 * time.Millisecond):
+		}
+	}
 }

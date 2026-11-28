@@ -7,10 +7,12 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/AloofLibra/zator/internal/config"
 	"github.com/AloofLibra/zator/internal/fsutil"
@@ -574,7 +576,29 @@ func (r *run) writeStatus() error {
 		{"rkn_par", strconv.Itoa(r.p.RKNPar)},
 		{"alive", r.alive},
 		{"domains", strings.Join(urls, " ")},
+		{"error", sanitizeReportError(r.firstErr())},
 	})
+}
+
+var reportURLQueryRe = regexp.MustCompile(`(https?://[^\s?"'<>]+)\?[^\s"'<>]*`)
+
+func sanitizeReportError(err error) string {
+	if err == nil {
+		return ""
+	}
+	s := reportURLQueryRe.ReplaceAllString(err.Error(), "$1")
+	s = strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\r' || r == '\t' {
+			return ' '
+		}
+		return r
+	}, s)
+	s = strings.Join(strings.Fields(s), " ")
+	if utf8.RuneCountInString(s) > 300 {
+		runes := []rune(s)
+		s = string(runes[:297]) + "..."
+	}
+	return s
 }
 
 // fail запоминает первую ошибку и останавливает прогон.
@@ -584,7 +608,10 @@ func (r *run) fail(err error) {
 		r.err = err
 	}
 	r.errMu.Unlock()
-	r.c.logf("Прогон остановлен: %v", err)
+	if msg := sanitizeReportError(err); msg != "" {
+		r.c.logf("Прогон остановлен: %s", msg)
+	}
+	_ = r.writeStatus()
 	_ = os.WriteFile(r.path(fileCancel), nil, 0o644)
 	if r.cancel != nil {
 		r.cancel()

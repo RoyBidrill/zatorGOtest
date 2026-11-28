@@ -335,6 +335,9 @@ func TestCoordinator_CancelKeepsPrev(t *testing.T) {
 	if rep.State != StateCancelled || rep.Active {
 		t.Fatalf("report: %+v", rep)
 	}
+	if rep.Error != "" {
+		t.Errorf("cancel must not set report error: %q", rep.Error)
+	}
 	e.wantLock("1", "tls", 9)
 	e.wantLock("1", "http", 9)
 	e.wantLock("4", "tls", 11)
@@ -421,6 +424,9 @@ func TestCoordinator_ContextCancel(t *testing.T) {
 	}
 	if rep.State != StateCancelled {
 		t.Errorf("state = %s", rep.State)
+	}
+	if rep.Error != "" {
+		t.Errorf("context cancel must not set report error: %q", rep.Error)
 	}
 	e.wantLock("1", "tls", 9)
 	e.lockDirGone()
@@ -732,6 +738,16 @@ func TestCoordinator_ProbeStartFailureStopsRun(t *testing.T) {
 	if rep.State != StateCancelled {
 		t.Errorf("state = %s", rep.State)
 	}
+	if !strings.Contains(rep.Error, "boom") {
+		t.Errorf("expected error in report, got %q", rep.Error)
+	}
+	if liveRep, rerr := e.c.Report(); rerr != nil || !strings.Contains(liveRep.Error, "boom") {
+		t.Errorf("Report() error = %q (%v)", liveRep.Error, rerr)
+	}
+	savedRep, serr := ReadReport(filepath.Join(t.TempDir(), "absent"), ReportOptions{ArchiveDir: e.archive})
+	if serr != nil || !strings.Contains(savedRep.Error, "boom") {
+		t.Errorf("saved Report() error = %q (%v)", savedRep.Error, serr)
+	}
 	// Первая фаза уже применена и сохраняется, дальнейшие не стартовали.
 	e.wantLock("1", "tls", 3)
 	e.wantLock("4", "tls", 11)
@@ -753,6 +769,17 @@ func TestCoordinator_UnhealthyProbe(t *testing.T) {
 	e.wantLock("1", "tls", 9) // откат
 	if len(e.chk.callLog()) != 0 {
 		t.Error("no checks must run without a healthy probe")
+	}
+}
+
+func TestSanitizeReportErrorRedactsURLQuery(t *testing.T) {
+	err := errors.New("probe failed for https://rr2---sn-4g5ednly.googlevideo.com/videoplayback?expire=1700&sig=SECRET_TOKEN\nsecond line")
+	got := sanitizeReportError(err)
+	if strings.Contains(got, "SECRET_TOKEN") || strings.Contains(got, "?") || strings.Contains(got, "\n") {
+		t.Fatalf("unsanitized error: %q", got)
+	}
+	if !strings.Contains(got, "https://rr2---sn-4g5ednly.googlevideo.com/videoplayback") {
+		t.Fatalf("missing path prefix: %q", got)
 	}
 }
 

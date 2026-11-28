@@ -680,15 +680,25 @@ func cmdUninstall(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// newWebHandler собирает обработчик Web UI: API (/cgi-bin/*.cgi и /api/*) и
-// статику. Без auth_enabled API открыт всем — предупреждение в stderr.
-func newWebHandler(a *app.App, stderr io.Writer) (http.Handler, error) {
+// newWebServer собирает HTTP-сервер API и статики Web UI.
+// Без auth_enabled API открыт всем — предупреждение в stderr.
+func newWebServer(a *app.App, stderr io.Writer) (*webapi.Server, error) {
 	api, err := webapi.New(webapi.Options{App: a})
 	if err != nil {
 		return nil, err
 	}
 	if !a.Config.AuthRequired() {
 		fmt.Fprintln(stderr, "Web UI без проверки доступа (auth_enabled=false); включите: zator auth enable / set-password")
+	}
+	return api, nil
+}
+
+// newWebHandler собирает обработчик Web UI: API (/cgi-bin/*.cgi и /api/*) и
+// статику.
+func newWebHandler(a *app.App, stderr io.Writer) (http.Handler, error) {
+	api, err := newWebServer(a, stderr)
+	if err != nil {
+		return nil, err
 	}
 	return api.Handler(), nil
 }
@@ -714,7 +724,7 @@ func cmdServe(name string, args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "предупреждение files/fake: %v\n", err)
 	}
 
-	handler, err := newWebHandler(a, stderr)
+	api, err := newWebServer(a, stderr)
 	if err != nil {
 		fmt.Fprintf(stderr, "ошибка инициализации Web UI: %v\n", err)
 		return 1
@@ -723,7 +733,7 @@ func cmdServe(name string, args []string, stdout, stderr io.Writer) int {
 	addr := net.JoinHostPort(webUIHost(*host, a.Platform), strconv.Itoa(a.Config.Port))
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           handler,
+		Handler:           api.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -746,6 +756,7 @@ func cmdServe(name string, args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 	case <-ctx.Done():
+		api.Close()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(shutdownCtx)
