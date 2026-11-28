@@ -326,3 +326,34 @@ func TestSafeUntarNotGzip(t *testing.T) {
 		t.Fatal("ожидалась ошибка")
 	}
 }
+
+func TestListTarGzRejectsUnsafeHardlinkAndSafeUntarFilteredValidated(t *testing.T) {
+	bad := makeTarGz(t, []entry{
+		{name: "ok.txt", body: "ok"},
+		{name: "badlink", typ: tar.TypeLink, linkname: "../escape"},
+	})
+	if _, err := ListTarGz(bad); !errors.Is(err, ErrUnsafePath) {
+		t.Fatalf("ListTarGz hardlink error = %v, want ErrUnsafePath", err)
+	}
+
+	good := makeTarGz(t, []entry{
+		{name: "r/keep/a", body: "A", mode: 0o755},
+		{name: "r/drop/b", body: "B"},
+	})
+	names, err := ListTarGz(good)
+	if err != nil || len(names) != 2 {
+		t.Fatalf("ListTarGz = %v, err=%v", names, err)
+	}
+	dest := t.TempDir()
+	if err := SafeUntarFilteredValidated(good, dest, func(name string, _ os.FileMode) (string, bool) {
+		if name == "r/keep/a" {
+			return "out/a", true
+		}
+		return "", false
+	}); err != nil {
+		t.Fatalf("SafeUntarFilteredValidated: %v", err)
+	}
+	if b, err := os.ReadFile(filepath.Join(dest, "out", "a")); err != nil || string(b) != "A" {
+		t.Fatalf("extracted = %q, err=%v", b, err)
+	}
+}

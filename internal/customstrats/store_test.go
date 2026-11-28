@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/AloofLibra/zator/internal/config"
 	"github.com/AloofLibra/zator/internal/orchestra"
@@ -187,5 +188,39 @@ func TestRenameBlobInSpecs(t *testing.T) {
 	rows, _ := st.List("")
 	if rows[0].Spec != "fake:blob=new_fake:fallback=old_fake_2 --lua-desync=send:repeats=2" {
 		t.Fatalf("token-exact rename failed: got %q", rows[0].Spec)
+	}
+}
+
+func TestApplySkipsTSVWriteWhenUnchanged(t *testing.T) {
+	cfg, _ := loadSampleConfig(t, false)
+	dir := t.TempDir()
+	tsvPath := filepath.Join(dir, "custom_strategies.tsv")
+	blobsTSV := filepath.Join(dir, "custom_blobs.tsv")
+	_ = os.WriteFile(blobsTSV, []byte("# hdr\n1\tmy_blob\tmy.bin\t\n"), 0o644)
+
+	st := NewStore(tsvPath, blobsTSV, nil)
+	if _, err := st.Add(BlockTPL, "fake:blob=my_blob:repeats=1", "noop", cfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Apply(cfg); err != nil {
+		t.Fatal(err)
+	}
+	past := time.Unix(1_700_000_000, 0)
+	if err := os.Chtimes(tsvPath, past, past); err != nil {
+		t.Fatal(err)
+	}
+	res, err := st.Apply(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Changed {
+		t.Fatalf("expected unchanged config on second Apply, got %+v", res)
+	}
+	info, err := os.Stat(tsvPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.ModTime().Equal(past) {
+		t.Fatalf("second idempotent Apply rewrote %s unnecessarily (mtime=%v, want %v)", tsvPath, info.ModTime(), past)
 	}
 }

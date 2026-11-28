@@ -59,6 +59,12 @@ func SafeUntarFiltered(archive, dest string, filter Filter) error {
 	if err := ValidateTarGz(archive); err != nil {
 		return err
 	}
+	return SafeUntarFilteredValidated(archive, dest, filter)
+}
+
+// SafeUntarFilteredValidated распаковывает предварительно провалидированный tar.gz
+// (например, после ListTarGz), сохраняя все проверки путей для каждой записи.
+func SafeUntarFilteredValidated(archive, dest string, filter Filter) error {
 	f, err := os.Open(archive)
 	if err != nil {
 		return err
@@ -180,8 +186,13 @@ func ListTarGz(archive string) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		if hdr.Typeflag == tar.TypeSymlink {
+		switch hdr.Typeflag {
+		case tar.TypeSymlink:
 			if err := checkSymlink(name, hdr.Linkname); err != nil {
+				return nil, err
+			}
+		case tar.TypeLink:
+			if _, err := CleanEntryName(hdr.Linkname); err != nil {
 				return nil, err
 			}
 		}

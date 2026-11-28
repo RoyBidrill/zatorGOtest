@@ -76,3 +76,50 @@ func TestSNIPoolAndSetsLifecycle(t *testing.T) {
 		t.Fatalf("profile 3 = %+v", payload.Profiles[2])
 	}
 }
+
+func TestLockedLuaAssetParityAndFixes(t *testing.T) {
+	luaPath := filepath.Join("..", "..", "assets", "lua", "locked.lua")
+	orchPath := filepath.Join("..", "..", "assets", "orchestra", "locked.lua")
+	luaBytes, err := os.ReadFile(luaPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", luaPath, err)
+	}
+	orchBytes, err := os.ReadFile(orchPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", orchPath, err)
+	}
+	if string(luaBytes) != string(orchBytes) {
+		t.Fatalf("assets/lua/locked.lua (%d B) and assets/orchestra/locked.lua (%d B) differ", len(luaBytes), len(orchBytes))
+	}
+
+	sniPoolPath := filepath.Join("..", "..", "assets", "lua", "sni-pool.lua")
+	sniPoolBytes, err := os.ReadFile(sniPoolPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", sniPoolPath, err)
+	}
+	sniPoolText := string(sniPoolBytes)
+	if !stringsContainsAll(sniPoolText,
+		"Alexander Markin",
+		"https://github.com/AloofLibra/zator",
+		"local SETS_TTL = 30",
+		"last_sets_load",
+	) {
+		t.Fatalf("sni-pool.lua missing required GPL attribution or SETS_TTL cache")
+	}
+}
+
+func stringsContainsAll(s string, subs ...string) bool {
+	for _, sub := range subs {
+		found := false
+		for i := 0; i+len(sub) <= len(s); i++ {
+			if s[i:i+len(sub)] == sub {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}

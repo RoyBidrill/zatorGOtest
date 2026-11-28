@@ -269,10 +269,12 @@ func (s *Server) wssizeGet(cfg *config.Config) any {
 	ipv4Fresh := false
 	generated := ""
 	if cl := s.app.GooglevideoCentralList(); cl != nil {
-		ips = cl.Count()
 		ipv4Fresh = cl.Fresh()
 		if l, lerr := cl.Load(); lerr == nil {
+			ips = len(l.IPs)
 			generated = l.Generated
+		} else {
+			ips = cl.Count()
 		}
 	} else if lines, err := readListLines(filepath.Join(s.paths.ListsDir, "googlevideo-ipv4.txt")); err == nil {
 		ips = len(listEntries(lines))

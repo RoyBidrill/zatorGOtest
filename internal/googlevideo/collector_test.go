@@ -522,3 +522,51 @@ func TestCollector_LogsDecisions(t *testing.T) {
 		}
 	}
 }
+
+func TestObserveBatch(t *testing.T) {
+	clk := newClock()
+	dir := filepath.Join(t.TempDir(), "gv")
+	hostsPath := filepath.Join(t.TempDir(), "googlevideo-hosts.txt")
+	c := NewCollector(CollectorConfig{Dir: dir, HostsFile: hostsPath, Now: clk.Now})
+	now := clk.Now().Unix()
+
+	writeText(t, c.ReportedFile(), fmt.Sprintf("%s\t9.9.9.1\t%d\n", hostA, now-60))
+	writeText(t, c.PendingFile(), fmt.Sprintf("9.9.9.2\t%d\t%s\n", now-30, hostB))
+
+	results, err := c.ObserveBatch([]Observation{
+		{Host: "invalid.example.com", IP: "9.9.9.9", TTL: 60},   // отбрасывается
+		{Host: hostA, IP: "10.0.0.1", TTL: 60},                  // отбрасывается
+		{Host: hostA, IP: "9.9.9.1", TTL: 300, Type: "A"},       // already_reported
+		{Host: hostB, IP: "9.9.9.2", TTL: 300, Type: "A"},       // already_queued
+		{Host: hostC, IP: "9.9.9.3", TTL: 300, Type: "A"},       // queued
+		{Host: hostC, IP: "9.9.9.3", TTL: 600, Type: "A"},       // дубль в батче -> already_queued, обновляет TTL в local
+	})
+	if err != nil {
+		t.Fatalf("ObserveBatch: %v", err)
+	}
+	if len(results) != 4 {
+		t.Fatalf("len(results) = %d, want 4: %+v", len(results), results)
+	}
+	if !results[0].AlreadyReported || results[0].Queued {
+		t.Errorf("results[0] = %+v", results[0])
+	}
+	if !results[1].AlreadyQueued || results[1].Queued {
+		t.Errorf("results[1] = %+v", results[1])
+	}
+	if !results[2].Queued {
+		t.Errorf("results[2] = %+v", results[2])
+	}
+	if !results[3].AlreadyQueued || results[3].Queued {
+		t.Errorf("results[3] = %+v", results[3])
+	}
+	if got := len(c.Local()); got != 3 {
+		t.Fatalf("local rows = %d, want 3", got)
+	}
+	if got := len(c.Pending()); got != 2 {
+		t.Fatalf("pending rows = %d, want 2", got)
+	}
+	hosts, err := NewHostsFile(hostsPath).List()
+	if err != nil || len(hosts) != 3 {
+		t.Fatalf("hosts = %v err=%v", hosts, err)
+	}
+}

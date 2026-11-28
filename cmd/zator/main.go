@@ -58,6 +58,7 @@ const usage = `zator — управление zapret2 через Web UI
 `
 
 func main() {
+	configureLowMemoryLimit()
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
 

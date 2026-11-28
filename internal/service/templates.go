@@ -388,7 +388,15 @@ func RenderOpenRC(d TemplateData) (string, error) {
 		b.WriteString("\n\texport ZATOR_OWNER ZATOR_REPO")
 	}
 	if d.LogFile != "" {
-		b.WriteString("\n\tmkdir -p \"$(dirname \"$pidfile\")\" \"$(dirname \"$output_log\")\"")
+		b.WriteString("\n\tmkdir -p \"$(dirname \"$pidfile\")\" \"$(dirname \"$output_log\")\"" +
+			"\n\tLOG_MAX_BYTES=\"${Z2R_SERVICE_LOG_MAX:-262144}\"" +
+			"\n\tif [ -f \"$output_log\" ]; then" +
+			"\n\t\tsz=$(wc -c <\"$output_log\" 2>/dev/null || echo 0)" +
+			"\n\t\tsz=$(echo \"$sz\" | tr -d ' \\t')" +
+			"\n\t\tif [ -n \"$sz\" ] && [ \"$sz\" -gt \"$LOG_MAX_BYTES\" ] 2>/dev/null; then" +
+			"\n\t\t\tmv -f \"$output_log\" \"$output_log.old\" 2>/dev/null || true" +
+			"\n\t\tfi" +
+			"\n\tfi")
 	} else {
 		b.WriteString("\n\tmkdir -p \"$(dirname \"$pidfile\")\"")
 	}

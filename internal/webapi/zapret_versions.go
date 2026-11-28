@@ -7,12 +7,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AloofLibra/zator/internal/deploy"
 	"github.com/AloofLibra/zator/internal/platform"
 	"github.com/AloofLibra/zator/internal/service"
 	"github.com/AloofLibra/zator/internal/zapret"
 )
 
 const zapretReleasesCacheTTL = 10 * time.Minute
+
+var zapretSpaceCheckFn = deploy.CheckZapretSpace
 
 type zapretReleasesCache struct {
 	embedded  bool
@@ -134,6 +137,14 @@ func (s *Server) postZapretVersion(r *http.Request, p params) (map[string]any, e
 	if s.app != nil {
 		mirror = s.app.Config.Mirror
 		plat = s.app.Platform
+	}
+	embedded := plat.Kind == platform.KindOpenWRT
+	if zapretSpaceCheckFn != nil {
+		if freeB, reqB, ok, serr := zapretSpaceCheckFn(s.paths.ZapretRoot, embedded); serr == nil && !ok {
+			return nil, errf(http.StatusInsufficientStorage,
+				fmt.Sprintf("Недостаточно свободного места для установки zapret2: свободно %.1f МБ, требуется минимум %.1f МБ",
+					float64(freeB)/(1<<20), float64(reqB)/(1<<20)))
+		}
 	}
 	zopts := zapret.Options{
 		Root:       s.paths.ZapretRoot,

@@ -196,9 +196,7 @@ func DownloadAndInstall(ctx context.Context, opts Options) (*Result, error) {
 	archive := filepath.Join(work, asset)
 	if local, ok := resolveLocalArchive(opts, asset); ok {
 		opts.logf("локальный архив %s", local)
-		if err := copyFile(local, archive, 0o644); err != nil {
-			return nil, fmt.Errorf("zapret: копирование локального архива: %w", err)
-		}
+		archive = local
 		if opts.SHA256 != "" {
 			if sum, err := fetch.SHA256File(archive); err != nil {
 				return nil, err
@@ -211,6 +209,18 @@ func DownloadAndInstall(ctx context.Context, opts Options) (*Result, error) {
 		offline := opts.Offline || envTruthy("Z2R_OFFLINE") || envTruthy("ZATOR_OFFLINE")
 		if offline {
 			return nil, fmt.Errorf("zapret: офлайн-режим, нет локального архива %s (положите в vendor/ или задайте LocalArchive)", asset)
+		}
+		if opts.TmpDir == "" {
+			needTmp := int64(24 << 20)
+			if embedded {
+				needTmp = 12 << 20
+			}
+			if free, ok := dirFreeBytes(os.TempDir()); ok && free >= needTmp {
+				if dlDir, dlErr := os.MkdirTemp(os.TempDir(), ".zapret2-dl-"); dlErr == nil {
+					defer os.RemoveAll(dlDir)
+					archive = filepath.Join(dlDir, asset)
+				}
+			}
 		}
 		opts.logf("загрузка %s", url)
 		if err := client.Download(ctx, url, archive, opts.SHA256); err != nil {
@@ -237,16 +247,11 @@ func DownloadAndInstall(ctx context.Context, opts Options) (*Result, error) {
 	}
 
 	stage := filepath.Join(work, "stage")
-	// Lua/common/init.d нужны для запуска nfqws2 и firewall (не только бинарники).
-	includeLua := opts.IncludeLua
-	if !includeLua {
-		includeLua = true // по умолчанию всегда тянем upstream lua
-	}
-	err = fetch.SafeUntarFiltered(archive, stage, func(name string, mode os.FileMode) (string, bool) {
+	err = fetch.SafeUntarFilteredValidated(archive, stage, func(name string, mode os.FileMode) (string, bool) {
 		if mode.IsDir() || (!mode.IsRegular() && mode&os.ModeSymlink == 0) {
 			return "", false
 		}
-		return stageRel(name, archDir, includeLua)
+		return stageRel(name, archDir, opts.IncludeLua)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("zapret: распаковка: %w", err)

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/AloofLibra/zator/internal/googlevideo"
 	"github.com/AloofLibra/zator/internal/paths"
@@ -121,5 +122,82 @@ func TestResolveGooglevideoHosts(t *testing.T) {
 	}
 	if got := a.GooglevideoLocalIPCount(); got != 1 {
 		t.Fatalf("GooglevideoLocalIPCount = %d, want 1", got)
+	}
+}
+
+func TestGooglevideoRefresherOptimizationsAndBackoff(t *testing.T) {
+	if got := gvRefreshBackoff(1); got != 5*time.Minute {
+		t.Errorf("backoff(1) = %v", got)
+	}
+	if got := gvRefreshBackoff(2); got != 15*time.Minute {
+		t.Errorf("backoff(2) = %v", got)
+	}
+	if got := gvRefreshBackoff(3); got != 30*time.Minute {
+		t.Errorf("backoff(3) = %v", got)
+	}
+	if got := gvRefreshBackoff(4); got != 60*time.Minute {
+		t.Errorf("backoff(4) = %v", got)
+	}
+
+	root := t.TempDir()
+	stateDir := filepath.Join(root, "gv-state")
+	t.Setenv("Z2R_GV_TMPDIR", stateDir)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("# googlevideo IPv4; generated=2026-11-28T10:00:00Z; max_age=604800s\n8.8.8.8\n"))
+	}))
+	defer srv.Close()
+	t.Setenv(googlevideo.EnvListURL, srv.URL)
+
+	p := paths.New(filepath.Join(root, "zator"), filepath.Join(root, "zapret2"))
+	a := NewWith(p, platform.Platform{})
+
+	cl := a.GooglevideoCentralList()
+	wantReq := filepath.Join(stateDir, googlevideo.ListFileName+".request")
+	if cl.RequestFile() != wantReq {
+		t.Fatalf("RequestFile() = %q, want %q", cl.RequestFile(), wantReq)
+	}
+
+	syncCalls := 0
+	prevSync := gvSyncKernelIPsHook
+	gvSyncKernelIPsHook = func(ctx context.Context, ips []string) error {
+		syncCalls++
+		return nil
+	}
+	t.Cleanup(func() { gvSyncKernelIPsHook = prevSync })
+
+	// Первичная загрузка синхронизирует kernel set; повторный тик со свежим кешем и skipFreshNotify=true — нет.
+	if _, err := a.refreshGooglevideoIPv4(context.Background(), false, true); err != nil {
+		t.Fatal(err)
+	}
+	if syncCalls != 1 {
+		t.Fatalf("expected 1 sync after initial fetch, got %d", syncCalls)
+	}
+	if _, err := a.refreshGooglevideoIPv4(context.Background(), false, true); err != nil {
+		t.Fatal(err)
+	}
+	if syncCalls != 1 {
+		t.Fatalf("expected no extra sync on fresh cache, got %d", syncCalls)
+	}
+
+	// На тике resolve без новых IPv4 синхронизация firewall пропускается.
+	prevCollect := gvCollect
+	gvCollect = nil
+	t.Cleanup(func() { gvCollect = prevCollect })
+	if _, err := a.GooglevideoCollector().Observe(googlevideo.Observation{
+		Host: "rr1---sn-cached.googlevideo.com",
+		Type: "A",
+		IP:   "1.1.1.1",
+		TTL:  3600,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.GooglevideoHosts().Add("rr1---sn-cached.googlevideo.com"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.resolveGooglevideoHosts(context.Background(), false, true); err != nil {
+		t.Fatal(err)
+	}
+	if syncCalls != 1 {
+		t.Fatalf("expected no firewall sync when no new IPs were resolved, got %d", syncCalls)
 	}
 }

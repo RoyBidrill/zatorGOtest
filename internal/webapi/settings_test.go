@@ -775,3 +775,21 @@ func TestWebapiSupersweepCloseAndError(t *testing.T) {
 		t.Fatalf("Server.Close did not stop active sweeper: %+v", ws)
 	}
 }
+
+func TestReadFileTail(t *testing.T) {
+	dir := t.TempDir()
+	small := filepath.Join(dir, "small.log")
+	_ = os.WriteFile(small, []byte("hello"), 0o644)
+	if got, err := readFileTail(small, 100); err != nil || string(got) != "hello" {
+		t.Fatalf("small tail = %q, err=%v", got, err)
+	}
+
+	large := filepath.Join(dir, "large.log")
+	_ = os.WriteFile(large, []byte("0123456789ABCDEF"), 0o644)
+	if got, err := readFileTail(large, 6); err != nil || string(got) != "ABCDEF" {
+		t.Fatalf("large tail = %q, err=%v", got, err)
+	}
+	if _, err := readFileTail(filepath.Join(dir, "missing.log"), 6); err == nil {
+		t.Fatal("expected error for missing file")
+	}
+}

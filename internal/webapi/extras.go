@@ -3,6 +3,7 @@ package webapi
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -120,6 +121,27 @@ func (s *Server) postConfigRaw(r *http.Request, p params) (map[string]any, error
 	return map[string]any{"ok": true, "restarted": s.maybeRestart(r.Context(), p), "size": len(content)}, nil
 }
 
+func readFileTail(path string, maxBytes int64) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	if maxBytes <= 0 {
+		return nil, nil
+	}
+	st, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if st.Size() > maxBytes {
+		if _, err := f.Seek(-maxBytes, io.SeekEnd); err != nil {
+			return nil, err
+		}
+	}
+	return io.ReadAll(io.LimitReader(f, maxBytes))
+}
+
 // nfqws2ErrorsGet — журнал ошибок последнего запуска (п.666 CLI).
 func (s *Server) nfqws2ErrorsGet() map[string]any {
 	candidates := []string{
@@ -129,12 +151,9 @@ func (s *Server) nfqws2ErrorsGet() map[string]any {
 	}
 	out := map[string]any{"available": false, "path": "", "content": "", "lines": 0}
 	for _, p := range candidates {
-		data, err := os.ReadFile(p)
+		data, err := readFileTail(p, maxErrLogBytes)
 		if err != nil {
 			continue
-		}
-		if len(data) > maxErrLogBytes {
-			data = data[len(data)-maxErrLogBytes:]
 		}
 		text := strings.ReplaceAll(string(data), "\r\n", "\n")
 		suppressed := 0

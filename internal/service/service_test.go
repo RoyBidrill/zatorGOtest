@@ -902,6 +902,8 @@ func TestRenderOpenRCAndWrapper(t *testing.T) {
 		`pidfile="/run/${RC_SVCNAME}.pid"`,
 		"output_log=",
 		"error_log=",
+		`LOG_MAX_BYTES="${Z2R_SERVICE_LOG_MAX:-262144}"`,
+		`mv -f "$output_log" "$output_log.old"`,
 		`PATH="${PATH:+$PATH:}"`,
 		"ZATOR_OWNER=AloofLibra",
 		"ZATOR_REPO=zatorGOtest",
@@ -909,6 +911,15 @@ func TestRenderOpenRCAndWrapper(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("RenderOpenRC missing %q:\n%s", want, got)
 		}
+	}
+	noLogData := c.templateData(UnitWebUI)
+	noLogData.LogFile = ""
+	noLogScript, err := RenderOpenRC(noLogData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(noLogScript, "LOG_MAX_BYTES") {
+		t.Errorf("RenderOpenRC without LogFile must not rotate output_log:\n%s", noLogScript)
 	}
 
 	wrap, err := RenderOpenRCZapretWrapper("/opt/zapret2/init.d/sysv/zapret2")

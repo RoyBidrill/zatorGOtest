@@ -159,3 +159,44 @@ func CheckPreflight(p paths.Paths, latest *Latest, mode string) (PreflightReport
 	r.CanUpdate = flashFree >= r.FlashRequired && zapretFree >= r.ZapretFlashRequired
 	return r, nil
 }
+
+// CheckZapretSpace проверяет достаточность свободного места на разделе zapretRoot
+// с учётом того, поместится ли скачиваемый архив в /tmp.
+func CheckZapretSpace(zapretRoot string, embedded bool) (freeBytes, requiredBytes int64, ok bool, err error) {
+	ancestor := zapretRoot
+	if ancestor == "" {
+		ancestor = "/opt/zapret2"
+	}
+	for {
+		if _, serr := os.Stat(ancestor); serr == nil {
+			break
+		}
+		parent := filepath.Dir(ancestor)
+		if parent == ancestor {
+			return 0, 0, false, fmt.Errorf("не найден flash-раздел для %s", zapretRoot)
+		}
+		ancestor = parent
+	}
+	freeBytes, err = fsAvailable(ancestor)
+	if err != nil {
+		return 0, 0, false, err
+	}
+	tmpNeed := int64(24 << 20)
+	if embedded {
+		tmpNeed = 12 << 20
+	}
+	if tmpFree, terr := fsAvailable("/tmp"); terr == nil && tmpFree >= tmpNeed {
+		if embedded {
+			requiredBytes = 4 << 20
+		} else {
+			requiredBytes = 8 << 20
+		}
+	} else {
+		if embedded {
+			requiredBytes = 10 << 20
+		} else {
+			requiredBytes = 24 << 20
+		}
+	}
+	return freeBytes, requiredBytes, freeBytes >= requiredBytes, nil
+}

@@ -121,3 +121,61 @@ func TestDetectCascadeAndInstallLimits(t *testing.T) {
 		t.Fatalf("custom bin outside tools/bin should remain: %v", err)
 	}
 }
+
+func TestInstallPreservesExistingOnVerifyFailureAndRemovesTemp(t *testing.T) {
+	root := t.TempDir()
+	p := paths.New(filepath.Join(root, "zator"), filepath.Join(root, "zapret2"))
+	toolsDir := p.ToolsBinDir()
+	if err := os.MkdirAll(toolsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(toolsDir, "curl-h3-x86_64")
+	const existingBody = "working-h3-curl-binary"
+	if err := os.WriteFile(dest, []byte(existingBody), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	payload := bytes.Repeat([]byte("D"), MinH3CurlSize+256)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(gzipBytes(t, payload))
+	}))
+	defer srv.Close()
+
+	env := H3Env{
+		Arch:        "amd64",
+		ReleaseBase: srv.URL,
+		VersionCheckFn: func(bin string) (string, error) {
+			return "curl 8.0.0 Features: HTTP2", nil // no http3/nghttp3 -> fail verify
+		},
+	}
+
+	if _, err := env.Install(context.Background(), p, true); !errors.Is(err, ErrH3InvalidArtifact) {
+		t.Fatalf("expected ErrH3InvalidArtifact, got %v", err)
+	}
+	got, err := os.ReadFile(dest)
+	if err != nil || string(got) != existingBody {
+		t.Fatalf("existing working binary was altered/removed: %q, err=%v", got, err)
+	}
+	ents, _ := os.ReadDir(toolsDir)
+	for _, e := range ents {
+		if strings.Contains(e.Name(), ".tmp") {
+			t.Fatalf("leftover temp file in toolsDir: %s", e.Name())
+		}
+	}
+}
+
+func TestDetectMIPSEndiannessHeaderAndFallback(t *testing.T) {
+	dir := t.TempDir()
+	shortELF := filepath.Join(dir, "short")
+	if err := os.WriteFile(shortELF, []byte{0x7f, 'E', 'L', 'F'}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	relFile := filepath.Join(dir, "openwrt_release")
+	if err := os.WriteFile(relFile, []byte("DISTRIB_ARCH='mips_24kc'\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := (H3Env{Arch: "mips", ELFPath: shortELF, OpenWrtReleasePath: relFile}).DetectArch()
+	if err != nil || got != "mipssf" {
+		t.Fatalf("short ELF fallback = %q, %v; want mipssf", got, err)
+	}
+}

@@ -170,8 +170,14 @@ type CentralList struct {
 	Client *http.Client
 	// Now — источник времени (по умолчанию time.Now).
 	Now func() time.Time
-	// OnUpdate вызывается после замены кеша и при свежем кеше с актуальным
-	// списком — для синхронизации набора ядра (ipset/nft). Ошибки игнорируются.
+	// RequestPath — необязательный путь маркера попытки (например, в tmpfs).
+	// По умолчанию используется File + ".request".
+	RequestPath string
+	// SkipFreshNotify отключает вызов OnUpdate при свежем кеше (или отключённом feed);
+	// при реальной загрузке нового списка OnUpdate вызывается всегда.
+	SkipFreshNotify bool
+	// OnUpdate вызывается после замены кеша и (если SkipFreshNotify=false) при
+	// свежем кеше с актуальным списком — для синхронизации набора ядра.
 	OnUpdate func(ips []string) error
 
 	mu sync.Mutex // сериализует Update
@@ -208,7 +214,12 @@ func (c *CentralList) client() *http.Client {
 }
 
 // RequestFile — маркер последней попытки обновления: «epoch\nok|failed\n».
-func (c *CentralList) RequestFile() string { return c.File + ".request" }
+func (c *CentralList) RequestFile() string {
+	if c.RequestPath != "" {
+		return c.RequestPath
+	}
+	return c.File + ".request"
+}
 
 // Fresh сообщает, что кеш непуст и моложе TTL.
 func (c *CentralList) Fresh() bool {
@@ -308,7 +319,9 @@ func (c *CentralList) Update(ctx context.Context, force bool) (UpdateResult, err
 		res := UpdateResult{Status: UpdateFresh}
 		if l, err := c.Load(); err == nil {
 			res.Count, res.Generated = len(l.IPs), l.Generated
-			c.notify(l.IPs)
+			if !c.SkipFreshNotify {
+				c.notify(l.IPs)
+			}
 		} else {
 			res.Count = c.Count()
 		}
@@ -324,7 +337,9 @@ func (c *CentralList) Update(ctx context.Context, force bool) (UpdateResult, err
 		if len(l.IPs) == 0 {
 			return UpdateResult{}, fmt.Errorf("%w: удалённый источник отключён, локальный список пуст", ErrFetch)
 		}
-		c.notify(l.IPs)
+		if !c.SkipFreshNotify {
+			c.notify(l.IPs)
+		}
 		return UpdateResult{Status: UpdateFresh, Count: len(l.IPs), Generated: l.Generated}, nil
 	}
 
@@ -388,8 +403,9 @@ func (c *CentralList) writeRequest(ok bool) {
 	if ok {
 		status = "ok"
 	}
-	_ = os.MkdirAll(filepath.Dir(c.File), 0o755)
-	_ = fsutil.AtomicWriteFile(c.RequestFile(), []byte(strconv.FormatInt(c.now().Unix(), 10)+"\n"+status+"\n"), 0o644)
+	reqPath := c.RequestFile()
+	_ = os.MkdirAll(filepath.Dir(reqPath), 0o755)
+	_ = fsutil.AtomicWriteFile(reqPath, []byte(strconv.FormatInt(c.now().Unix(), 10)+"\n"+status+"\n"), 0o644)
 }
 
 // RequestStatus читает маркер последней попытки обновления: время и

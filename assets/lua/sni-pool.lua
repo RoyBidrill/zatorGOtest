@@ -32,10 +32,12 @@ local POOL_PIN = "/opt/zator/state/orchestra/sni_pool.pin"
 local SETS_PROJECT = "/opt/zator/extra_strats/sni_zator.txt"
 local SETS_USER = "/opt/zator/extra_strats/sni_user.txt"
 local TTL = 2
+local SETS_TTL = 30
 local MAX = 32
 local PIN_AGE = 900
 
 local last_load = 0
+local last_sets_load = 0
 local pools = nil
 local policies = nil
 local sets_map = nil
@@ -143,6 +145,7 @@ function z2r_sni_pool_for_tests(lines, sets, pin, policies)
   pools = nil
   sets_map = nil
   last_load = 0
+  last_sets_load = 0
 end
 
 local function refresh()
@@ -156,7 +159,10 @@ local function refresh()
   local now = os.time() or 0
   if pools ~= nil and (now - last_load) < TTL then return end
   last_load = now
-  sets_map = load_sets_map(nil)
+  if sets_map == nil or (now - last_sets_load) >= SETS_TTL then
+    last_sets_load = now
+    sets_map = load_sets_map(nil)
+  end
   pools = load_pools(nil, sets_map)
   policies = load_policies(nil)
   pinned = false

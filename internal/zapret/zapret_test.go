@@ -315,6 +315,39 @@ func TestInstallFromLocalArchive(t *testing.T) {
 	}
 }
 
+func TestInstallLocalArchiveSkipsCopyAndRespectsIncludeLua(t *testing.T) {
+	ver := "0.8.2"
+	dir := t.TempDir()
+	localArch := filepath.Join(dir, "custom.tar.gz")
+	if err := os.WriteFile(localArch, buildArchive(t, "zapret2-v"+ver), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	tmpBase := filepath.Join(dir, "tmp-work")
+	if err := os.MkdirAll(tmpBase, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(dir, "opt", "zapret2")
+	_, err := DownloadAndInstall(context.Background(), Options{
+		Root:         root,
+		TmpDir:       tmpBase,
+		Arch:         platform.ArchX86_64,
+		Version:      ver,
+		LocalArchive: localArch,
+		IncludeLua:   false,
+		Offline:      true,
+		Client:       fastClient(),
+	})
+	if err != nil {
+		t.Fatalf("DownloadAndInstall: %v", err)
+	}
+	if entries, _ := os.ReadDir(filepath.Join(root, "lua")); len(entries) != 0 {
+		t.Fatalf("expected empty lua dir when IncludeLua=false, got %v", entries)
+	}
+	if entries, _ := os.ReadDir(tmpBase); len(entries) != 0 {
+		t.Fatalf("expected clean tmpBase, got %v", entries)
+	}
+}
+
 func TestInstallSkipAndForce(t *testing.T) {
 	ver := "0.8.2"
 	var hits int32

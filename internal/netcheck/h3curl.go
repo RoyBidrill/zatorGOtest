@@ -1,7 +1,6 @@
 package netcheck
 
 import (
-	"bytes"
 	"compress/gzip"
 	"context"
 	"errors"
@@ -16,7 +15,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AloofLibra/zator/internal/fsutil"
 	"github.com/AloofLibra/zator/internal/paths"
 )
 
@@ -188,12 +186,17 @@ func (e H3Env) DetectArch() (string, error) {
 }
 
 func (e H3Env) detectMIPSEndianness() string {
-	if data, err := os.ReadFile(e.elfPath()); err == nil && len(data) >= 6 {
-		switch data[5] {
-		case 1:
-			return "little"
-		case 2:
-			return "big"
+	if f, err := os.Open(e.elfPath()); err == nil {
+		var hdr [6]byte
+		n, rerr := io.ReadFull(f, hdr[:])
+		_ = f.Close()
+		if rerr == nil && n == 6 {
+			switch hdr[5] {
+			case 1:
+				return "little"
+			case 2:
+				return "big"
+			}
 		}
 	}
 	if raw, err := os.ReadFile(e.openWrtReleasePath()); err == nil {
@@ -324,21 +327,52 @@ func (e H3Env) Install(ctx context.Context, p paths.Paths, force bool) (string, 
 	}
 	defer gz.Close()
 
-	data, err := io.ReadAll(io.LimitReader(gz, MaxH3CurlSize+1))
+	if err := os.MkdirAll(toolsDir, 0o755); err != nil {
+		return "", fmt.Errorf("подготовка %s: %w", toolsDir, err)
+	}
+	tmp, err := os.CreateTemp(toolsDir, ".curl-h3-"+arch+"-*.tmp")
 	if err != nil {
+		return "", fmt.Errorf("временный файл в %s: %w", toolsDir, err)
+	}
+	tmpName := tmp.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(tmpName)
+		}
+	}()
+
+	n, err := io.Copy(tmp, io.LimitReader(gz, MaxH3CurlSize+1))
+	if err != nil {
+		_ = tmp.Close()
 		return "", fmt.Errorf("%w: распаковка gzip: %v", ErrH3InvalidArtifact, err)
 	}
-	if len(data) > MaxH3CurlSize || len(data) < MinH3CurlSize {
-		return "", fmt.Errorf("%w: размер бинарника %d Б вне диапазона %d..%d Б", ErrH3InvalidArtifact, len(data), MinH3CurlSize, MaxH3CurlSize)
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return "", fmt.Errorf("синхронизация %s: %w", tmpName, err)
 	}
-
-	if err := fsutil.AtomicWriteFile(dest, data, 0o755); err != nil {
-		return "", fmt.Errorf("запись %s: %w", dest, err)
+	if err := tmp.Close(); err != nil {
+		return "", fmt.Errorf("закрытие %s: %w", tmpName, err)
 	}
-	if !e.supportsHTTP3(dest) {
-		_ = os.Remove(dest)
+	if n > MaxH3CurlSize || n < MinH3CurlSize {
+		return "", fmt.Errorf("%w: размер бинарника %d Б вне диапазона %d..%d Б", ErrH3InvalidArtifact, n, MinH3CurlSize, MaxH3CurlSize)
+	}
+	if err := os.Chmod(tmpName, 0o755); err != nil {
+		return "", fmt.Errorf("права %s: %w", tmpName, err)
+	}
+	if !e.supportsHTTP3(tmpName) {
 		return "", fmt.Errorf("%w: скачанный бинарник не прошёл проверку --version (HTTP3/nghttp3)", ErrH3InvalidArtifact)
 	}
+	if err := os.Rename(tmpName, dest); err != nil {
+		if runtime.GOOS == "windows" {
+			_ = os.Remove(dest)
+			err = os.Rename(tmpName, dest)
+		}
+		if err != nil {
+			return "", fmt.Errorf("запись %s: %w", dest, err)
+		}
+	}
+	cleanup = false
 	return dest, nil
 }
 
@@ -356,7 +390,12 @@ func (e H3Env) FindCABundle() string {
 		}
 		return ""
 	}
-	for _, p := range []string{"/opt/etc/ssl/certs/ca-certificates.crt", "/etc/ssl/certs/ca-certificates.crt"} {
+	for _, p := range []string{
+		"/opt/etc/ssl/certs/ca-certificates.crt",
+		"/etc/ssl/certs/ca-certificates.crt",
+		"/etc/pki/tls/certs/ca-bundle.crt",
+		"/etc/ssl/cert.pem",
+	} {
 		if _, err := os.Stat(p); err == nil {
 			return p
 		}
@@ -406,6 +445,5 @@ func RemoveH3Curl(p paths.Paths) error {
 	if len(errs) > 0 {
 		return fmt.Errorf("ошибка удаления h3-curl: %s", strings.Join(errs, "; "))
 	}
-	_ = bytes.Buffer{}
 	return nil
 }

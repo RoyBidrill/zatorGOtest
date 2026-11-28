@@ -281,13 +281,13 @@ function locked_strategy_for_scope(scope, profile, proto)
   return locked_strategy_for_profile(profile, proto, scope)
 end
 
--- Точный хост, затем родители по метке. 0 — лок, не промах.
--- ponytail: IPv4 не обходить, иначе 1.2.3.4 дойдёт до профиля "3".
+-- Точный хост, затем родители по метке (только FQDN с точкой). 0 — лок, не промах.
+-- ponytail: IPv4/IPv6 и одиночные метки (TLD, номера профилей "1".."8") не обходить.
 function locked_strategy_for_host(host, proto, scope)
   if not host or host == "" then return nil end
   host = string.lower(tostring(host):gsub("%.+$", ""))
-  if host == "" or string.match(host, "^%d+%.%d+%.%d+%.%d+$") then return nil end
-  while host and host ~= "" do
+  if host == "" or string.find(host, ":", 1, true) or string.match(host, "^%d+%.%d+%.%d+%.%d+$") then return nil end
+  while host and string.find(host, ".", 1, true) do
     local locked, conflict = locked_strategy_for_profile(host, proto, scope)
     if locked ~= nil or conflict then return locked end
     host = string.match(host, "^[^%.]+%.(.+)$")
@@ -1028,14 +1028,15 @@ function blob_override_execute(desync, verdict, instance, profile_key)
   local mode = profile_key and MODE_OVERRIDES[tostring(profile_key)]
   local name = profile_key and BLOB_OVERRIDES[tostring(profile_key)]
   local sni = profile_key and SNI_OVERRIDES[tostring(profile_key)]
-  -- zator sni-pool (lua/sni-pool.lua): пул невинных SNI с автосменой; явный
-  -- пин sni_override.tsv выше приоритетом. Модуля нет (старая установка или
-  -- изолированный прогон) -> тихий no-op, прежнее поведение.
-  if sni == nil and type(z2r_sni_pool_pick) == "function" then
-    sni = z2r_sni_pool_pick(desync, profile_key)
-  end
   local fake_arg = (instance and instance.arg and z2r_fake_blob_arg(instance.func)) or nil
   local native_clone = instance and instance.func == "tls_client_hello_clone"
+  local has_sni_first = instance and instance.arg and instance.arg.sni_first and instance.arg.sni_first ~= ""
+  -- zator sni-pool (lua/sni-pool.lua): пул невинных SNI с автосменой; явный
+  -- пин sni_override.tsv выше приоритетом. Вызываем только для clone/sni_first,
+  -- чтобы не дёргать файловый I/O и ротацию на обычных стратегиях в classic-режиме.
+  if sni == nil and (mode == "clone" or has_sni_first) and type(z2r_sni_pool_pick) == "function" then
+    sni = z2r_sni_pool_pick(desync, profile_key)
+  end
   if (not mode and not name and not sni and not fake_arg and not native_clone) or not instance or not instance.arg then
     return plan_instance_execute(desync, verdict, instance)
   end

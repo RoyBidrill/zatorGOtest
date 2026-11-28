@@ -225,4 +225,36 @@ func TestDepsAndPkgSpecs(t *testing.T) {
 	if !reflect.DeepEqual(opkgCmd.Args, []string{"install", "iptables"}) {
 		t.Fatalf("opkg cmd = %+v", opkgCmd)
 	}
+
+	// OpenWrt procd поддерживает как opkg (старые), так и apk (25.12+).
+	procd := Resolve(platform.Platform{Kind: platform.KindOpenWRT, InitSystem: platform.InitProcd}, Options{})
+	if !reflect.DeepEqual(procd.PkgManagerOrder(), []string{"opkg", "apk"}) {
+		t.Fatalf("procd PkgManagerOrder = %v", procd.PkgManagerOrder())
+	}
+	if upd, ok := procd.PkgUpdateCmd("opkg", "/bin/opkg"); !ok || upd.Name != "/bin/opkg" || !reflect.DeepEqual(upd.Args, []string{"update"}) {
+		t.Fatalf("procd opkg update = %+v, %t", upd, ok)
+	}
+	if _, ok := procd.PkgUpdateCmd("apk", "/usr/bin/apk"); ok {
+		t.Fatal("procd apk must not need separate update command")
+	}
+	if cmd := procd.PkgInstallCmd("apk", "/usr/bin/apk", []string{"nftables"}); !reflect.DeepEqual(cmd.Args, []string{"add", "--no-cache", "nftables"}) {
+		t.Fatalf("procd apk install = %+v", cmd)
+	}
+
+	// VPS systemd/sysv поддерживают apt-get, dnf, yum, pacman и apk.
+	sysd := Resolve(platform.Platform{Kind: platform.KindVPS, InitSystem: platform.InitSystemd}, Options{})
+	sysv := Resolve(platform.Platform{Kind: platform.KindVPS, InitSystem: platform.InitSysV}, Options{})
+	wantOrder := []string{"apt-get", "dnf", "yum", "pacman", "apk"}
+	if !reflect.DeepEqual(sysd.PkgManagerOrder(), wantOrder) || !reflect.DeepEqual(sysv.PkgManagerOrder(), wantOrder) {
+		t.Fatalf("VPS PkgManagerOrder = systemd:%v sysv:%v", sysd.PkgManagerOrder(), sysv.PkgManagerOrder())
+	}
+	if cmd := sysd.PkgInstallCmd("pacman", "/usr/bin/pacman", []string{"nftables"}); !reflect.DeepEqual(cmd.Args, []string{"-S", "--noconfirm", "--needed", "nftables"}) {
+		t.Fatalf("pacman cmd = %+v", cmd)
+	}
+	if cmd := sysd.PkgInstallCmd("dnf", "/usr/bin/dnf", []string{"iptables", "ipset"}); !reflect.DeepEqual(cmd.Args, []string{"install", "-y", "iptables", "ipset"}) {
+		t.Fatalf("dnf cmd = %+v", cmd)
+	}
+	if cmd := sysd.PkgInstallCmd("yum", "/usr/bin/yum", []string{"nftables"}); !reflect.DeepEqual(cmd.Args, []string{"install", "-y", "nftables"}) {
+		t.Fatalf("yum cmd = %+v", cmd)
+	}
 }

@@ -110,6 +110,7 @@ func ResolveHosts(ctx context.Context, hosts []string, cfg ResolveConfig) Resolv
 	}
 
 	resolvedSet := make(map[string]struct{})
+	var batch []Observation
 	if len(candidates) > 0 && ctx.Err() == nil {
 		workers := cfg.Concurrency
 		if workers > len(candidates) {
@@ -142,15 +143,15 @@ func ResolveHosts(ctx context.Context, hosts []string, cfg ResolveConfig) Resolv
 						if !PublicIPv4(ip) {
 							continue
 						}
+						mu.Lock()
 						if cfg.Collector != nil {
-							_, _ = cfg.Collector.Observe(Observation{
+							batch = append(batch, Observation{
 								Host: host,
 								Type: "A",
 								IP:   ip,
 								TTL:  cfg.TTL,
 							})
 						}
-						mu.Lock()
 						resolvedSet[ip] = struct{}{}
 						liveSet[ip] = struct{}{}
 						mu.Unlock()
@@ -159,6 +160,9 @@ func ResolveHosts(ctx context.Context, hosts []string, cfg ResolveConfig) Resolv
 			}()
 		}
 		wg.Wait()
+	}
+	if cfg.Collector != nil && len(batch) > 0 {
+		_, _ = cfg.Collector.ObserveBatch(batch)
 	}
 
 	res := ResolveResult{

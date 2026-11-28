@@ -25,3 +25,8 @@ type PreflightReport struct {
 func CheckPreflight(paths.Paths, *Latest, string) (PreflightReport, error) {
 	return PreflightReport{}, fmt.Errorf("предварительная проверка памяти поддерживается только на Linux")
 }
+
+// CheckZapretSpace на не-Linux платформах возвращает ok=true.
+func CheckZapretSpace(string, bool) (freeBytes, requiredBytes int64, ok bool, err error) {
+	return 0, 0, true, nil
+}

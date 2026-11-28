@@ -406,3 +406,40 @@ func TestListURLFromEnv(t *testing.T) {
 		t.Errorf("custom ListURLFromEnv() = %q, want %q", got, mirror)
 	}
 }
+
+func TestCentralList_RequestPathAndSkipFreshNotify(t *testing.T) {
+	srv := newListServer(t, listBody("8.8.8.8", "1.1.1.1"))
+	dir := t.TempDir()
+	reqPath := filepath.Join(dir, "tmpfs", "state", "googlevideo-ipv4.txt.request")
+	var notifies int
+	c := &CentralList{
+		URL:             srv.URL,
+		File:            filepath.Join(dir, "lists", ListFileName),
+		RequestPath:     reqPath,
+		SkipFreshNotify: true,
+		OnUpdate: func(ips []string) error {
+			notifies++
+			return nil
+		},
+	}
+
+	if c.RequestFile() != reqPath {
+		t.Fatalf("RequestFile() = %q, want %q", c.RequestFile(), reqPath)
+	}
+	res, err := c.Update(context.Background(), false)
+	if err != nil || res.Status != UpdateFetched || notifies != 1 {
+		t.Fatalf("initial fetch: res=%+v err=%v notifies=%d", res, err, notifies)
+	}
+	if _, _, ok := c.RequestStatus(); !ok {
+		t.Fatalf("expected request marker at %s", reqPath)
+	}
+	if _, err := os.Stat(c.File + ".request"); !os.IsNotExist(err) {
+		t.Fatalf("expected no .request alongside File when RequestPath is set, err=%v", err)
+	}
+
+	// Повторный Update на свежем кеше при SkipFreshNotify=true не дёргает OnUpdate.
+	res, err = c.Update(context.Background(), false)
+	if err != nil || res.Status != UpdateFresh || notifies != 1 {
+		t.Fatalf("fresh with SkipFreshNotify: res=%+v err=%v notifies=%d", res, err, notifies)
+	}
+}

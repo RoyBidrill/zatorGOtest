@@ -331,6 +331,31 @@ func (c *Collector) ObserveText(host, ip, ttl, typ string) (ObserveResult, error
 	return c.Observe(Observation{Host: host, IP: ip, TTL: n, Type: typ})
 }
 
+func (c *Collector) validateObservation(o Observation) (string, int, error) {
+	host, ok := NormalizeHostname(o.Host)
+	if !ok {
+		c.logf("observation rejected reason=hostname host=%s ip=%s", o.Host, o.IP)
+		return "", 0, ErrHostname
+	}
+	if t := o.Type; t != "" && t != "A" {
+		c.logf("observation rejected reason=record_type host=%s ip=%s type=%s", host, o.IP, t)
+		return "", 0, ErrRecordType
+	}
+	if !PublicIPv4(o.IP) {
+		c.logf("observation rejected reason=non_public_ip host=%s ip=%s", host, o.IP)
+		return "", 0, ErrNonPublicIP
+	}
+	ttl := o.TTL
+	if ttl <= 0 {
+		c.logf("observation rejected reason=zero_ttl host=%s ip=%s", host, o.IP)
+		return "", 0, ErrTTL
+	}
+	if ttl > MaxTTLSeconds {
+		ttl = MaxTTLSeconds
+	}
+	return host, ttl, nil
+}
+
 // Observe проверяет наблюдение (googlevideo_observe_local) и сохраняет его:
 //  1. имя — поддомен googlevideo.com, тип записи A, IP публичный, TTL > 0;
 //  2. local.tsv: выброшены истёкшие строки и прежняя пара host+ip, новая
@@ -339,26 +364,9 @@ func (c *Collector) ObserveText(host, ip, ttl, typ string) (ObserveResult, error
 //  4. пара, уже ждущая отправки, не дублируется;
 //  5. иначе строка `ip observed host` дописывается в pending.tsv (до 8192).
 func (c *Collector) Observe(o Observation) (ObserveResult, error) {
-	host, ok := NormalizeHostname(o.Host)
-	if !ok {
-		c.logf("observation rejected reason=hostname host=%s ip=%s", o.Host, o.IP)
-		return ObserveResult{}, ErrHostname
-	}
-	if t := o.Type; t != "" && t != "A" {
-		c.logf("observation rejected reason=record_type host=%s ip=%s type=%s", host, o.IP, t)
-		return ObserveResult{}, ErrRecordType
-	}
-	if !PublicIPv4(o.IP) {
-		c.logf("observation rejected reason=non_public_ip host=%s ip=%s", host, o.IP)
-		return ObserveResult{}, ErrNonPublicIP
-	}
-	ttl := o.TTL
-	if ttl <= 0 {
-		c.logf("observation rejected reason=zero_ttl host=%s ip=%s", host, o.IP)
-		return ObserveResult{}, ErrTTL
-	}
-	if ttl > MaxTTLSeconds {
-		ttl = MaxTTLSeconds
+	host, ttl, err := c.validateObservation(o)
+	if err != nil {
+		return ObserveResult{}, err
 	}
 
 	c.mu.Lock()
@@ -390,6 +398,114 @@ func (c *Collector) Observe(o Observation) (ObserveResult, error) {
 	res.Queued = true
 	c.logf("observation host=%s ip=%s result=queued observed_at=%d central_ip=%d", host, o.IP, now, b2i(res.Central))
 	return res, nil
+}
+
+// ObserveBatch сохраняет пакет наблюдений за одну блокировку с одиночной
+// перезаписью local.tsv, pending.tsv и HostsFile. Невалидные элементы пропускаются.
+func (c *Collector) ObserveBatch(items []Observation) ([]ObserveResult, error) {
+	if len(items) == 0 {
+		return nil, nil
+	}
+	type validObs struct {
+		host string
+		ip   string
+		ttl  int
+	}
+	valid := make([]validObs, 0, len(items))
+	for _, o := range items {
+		host, ttl, err := c.validateObservation(o)
+		if err != nil {
+			continue
+		}
+		valid = append(valid, validObs{host: host, ip: o.IP, ttl: ttl})
+	}
+	if len(valid) == 0 {
+		return nil, nil
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	now := c.now().Unix()
+	replaced := make(map[[2]string]LocalRow, len(valid))
+	replaceOrder := make([][2]string, 0, len(valid))
+	hostSet := make(map[string]struct{}, len(valid))
+	hosts := make([]string, 0, len(valid))
+	for _, v := range valid {
+		key := [2]string{v.host, v.ip}
+		if _, seen := replaced[key]; !seen {
+			replaceOrder = append(replaceOrder, key)
+		}
+		replaced[key] = LocalRow{Host: v.host, IP: v.ip, Expires: now + int64(v.ttl), Observed: now}
+		if _, seen := hostSet[v.host]; !seen {
+			hostSet[v.host] = struct{}{}
+			hosts = append(hosts, v.host)
+		}
+	}
+
+	var keep []string
+	for _, r := range ReadLocalFile(c.cfg.LocalFile) {
+		if r.Expires <= now {
+			continue
+		}
+		if _, upd := replaced[[2]string{r.Host, r.IP}]; upd {
+			continue
+		}
+		keep = append(keep, r.TSV())
+	}
+	for _, key := range replaceOrder {
+		keep = append(keep, replaced[key].TSV())
+	}
+	if err := writeLines(c.cfg.LocalFile, tail(keep, MaxStateRows)); err != nil {
+		return nil, err
+	}
+	if c.cfg.HostsFile != "" && len(hosts) > 0 {
+		_, _ = NewHostsFile(c.cfg.HostsFile).MergeFrom(hosts)
+	}
+
+	cutoff := now - int64(ReportedRetention/time.Second)
+	reported := make(map[[2]string]struct{})
+	for _, r := range ReadReportedFile(c.cfg.ReportedFile) {
+		if r.ReportedAt >= cutoff {
+			reported[[2]string{r.Host, r.IP}] = struct{}{}
+		}
+	}
+	queued := make(map[[2]string]struct{})
+	for _, f := range c.spoolFiles() {
+		for _, r := range ReadPendingFile(f) {
+			queued[[2]string{r.Host, r.IP}] = struct{}{}
+		}
+	}
+
+	results := make([]ObserveResult, 0, len(valid))
+	var pendingBatch []PendingRow
+	for _, v := range valid {
+		res := ObserveResult{
+			Host:     v.host,
+			IP:       v.ip,
+			Observed: now,
+			Expires:  now + int64(v.ttl),
+			Central:  c.central(v.ip),
+		}
+		key := [2]string{v.host, v.ip}
+		if _, ok := reported[key]; ok {
+			res.AlreadyReported = true
+			c.logf("observation host=%s ip=%s result=already_reported", v.host, v.ip)
+		} else if _, ok := queued[key]; ok {
+			res.AlreadyQueued = true
+			c.logf("observation host=%s ip=%s result=already_queued", v.host, v.ip)
+		} else {
+			queued[key] = struct{}{}
+			pendingBatch = append(pendingBatch, PendingRow{IP: v.ip, Observed: now, Host: v.host})
+			res.Queued = true
+			c.logf("observation host=%s ip=%s result=queued observed_at=%d central_ip=%d", v.host, v.ip, now, b2i(res.Central))
+		}
+		results = append(results, res)
+	}
+	if _, err := c.appendPendingBatch(pendingBatch); err != nil {
+		return results, err
+	}
+	return results, nil
 }
 
 func b2i(b bool) int {

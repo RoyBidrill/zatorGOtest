@@ -162,3 +162,26 @@ func TestPostZapretVersionValidationAndSwitch(t *testing.T) {
 	e.srv.now = func() time.Time { return cur }
 	_ = e.srv.zapretRelCache
 }
+
+func TestPostZapretVersionInsufficientStorage(t *testing.T) {
+	e := newEnv(t, envOpts{})
+	called := false
+	e.srv.zapretInstall = func(_ context.Context, opts zapret.Options) (*zapret.Result, error) {
+		called = true
+		return &zapret.Result{}, nil
+	}
+	prevCheck := zapretSpaceCheckFn
+	zapretSpaceCheckFn = func(root string, embedded bool) (int64, int64, bool, error) {
+		return 2 << 20, 8 << 20, false, nil
+	}
+	t.Cleanup(func() { zapretSpaceCheckFn = prevCheck })
+
+	resp, body := e.post("/api/settings", "setting", "zapret_version", "source", "fork", "version", "1.0.8-reasm-fix")
+	wantStatus(t, resp, http.StatusInsufficientStorage)
+	if called {
+		t.Fatal("zapretInstall must not be called when disk space preflight fails")
+	}
+	if body["error"] == nil {
+		t.Fatalf("expected error message in 507 response, got %+v", body)
+	}
+}

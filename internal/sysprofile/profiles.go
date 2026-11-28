@@ -107,7 +107,7 @@ func (systemdProfile) FirewallReloadCmd(p paths.Paths, root string) (CmdSpec, bo
 
 func (systemdProfile) CustomDFlavors(_ string) []string { return []string{"sysv"} }
 
-func (systemdProfile) PkgManagerOrder() []string { return []string{"apt-get", "apk"} }
+func (systemdProfile) PkgManagerOrder() []string { return []string{"apt-get", "dnf", "yum", "pacman", "apk"} }
 
 func (systemdProfile) PkgUpdateCmd(_, _ string) (CmdSpec, bool) { return CmdSpec{}, false }
 
@@ -318,13 +318,19 @@ func (procdProfile) FirewallReloadCmd(p paths.Paths, root string) (CmdSpec, bool
 
 func (procdProfile) CustomDFlavors(_ string) []string { return []string{"openwrt"} }
 
-func (procdProfile) PkgManagerOrder() []string { return []string{"opkg"} }
+func (procdProfile) PkgManagerOrder() []string { return []string{"opkg", "apk"} }
 
-func (procdProfile) PkgUpdateCmd(_, binPath string) (CmdSpec, bool) {
+func (procdProfile) PkgUpdateCmd(mgr, binPath string) (CmdSpec, bool) {
+	if mgr == "apk" {
+		return CmdSpec{}, false
+	}
 	return CmdSpec{Name: binPath, Args: []string{"update"}}, true
 }
 
-func (procdProfile) PkgInstallCmd(_, binPath string, pkgs []string) CmdSpec {
+func (procdProfile) PkgInstallCmd(mgr, binPath string, pkgs []string) CmdSpec {
+	if mgr == "apk" {
+		return linuxPkgInstallCmd(mgr, binPath, pkgs)
+	}
 	return CmdSpec{Name: binPath, Args: append([]string{"install"}, pkgs...)}
 }
 
@@ -526,7 +532,7 @@ func (sysvProfile) FirewallReloadCmd(p paths.Paths, root string) (CmdSpec, bool)
 
 func (sysvProfile) CustomDFlavors(_ string) []string { return []string{"sysv"} }
 
-func (sysvProfile) PkgManagerOrder() []string { return []string{"apt-get", "apk"} }
+func (sysvProfile) PkgManagerOrder() []string { return []string{"apt-get", "dnf", "yum", "pacman", "apk"} }
 
 func (sysvProfile) PkgUpdateCmd(_, _ string) (CmdSpec, bool) { return CmdSpec{}, false }
 
@@ -575,6 +581,11 @@ func linuxPkgInstallCmd(mgr, binPath string, pkgs []string) CmdSpec {
 	case "apk":
 		args := make([]string, 0, len(pkgs)+2)
 		args = append(args, "add", "--no-cache")
+		args = append(args, pkgs...)
+		return CmdSpec{Name: binPath, Args: args}
+	case "pacman":
+		args := make([]string, 0, len(pkgs)+3)
+		args = append(args, "-S", "--noconfirm", "--needed")
 		args = append(args, pkgs...)
 		return CmdSpec{Name: binPath, Args: args}
 	default:

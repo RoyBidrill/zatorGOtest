@@ -68,6 +68,7 @@ func (s *Store) Apply(cfg *config.Config) (ApplyResult, error) {
 			return err
 		}
 		before := cfg.String()
+		tsvChanged := false
 
 		for _, blk := range allBlocks {
 			mb, me, ok := config.CustomBlockMarkers(blk.Block)
@@ -97,7 +98,10 @@ func (s *Store) Apply(cfg *config.Config) (ApplyResult, error) {
 					newNum = stockMax + enabledCount
 					ins = append(ins, formatCustomLines(entries[i].Spec, newNum))
 				}
-				entries[i].Assigned = newNum
+				if entries[i].Assigned != newNum {
+					entries[i].Assigned = newNum
+					tsvChanged = true
+				}
 
 				if oldAssigned > 0 && oldAssigned != newNum {
 					for _, prof := range blk.Profiles {
@@ -142,7 +146,7 @@ func (s *Store) Apply(cfg *config.Config) (ApplyResult, error) {
 			}
 		}
 
-		if tsvExists {
+		if tsvExists && tsvChanged {
 			if err := s.writeUnlocked(entries); err != nil {
 				return err
 			}
